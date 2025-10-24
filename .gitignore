@@ -1,0 +1,32 @@
+# Compiled output
+out/
+*.js
+*.js.map
+!test/fixtures/**
+
+# Dependencies
+node_modules/
+
+# IDE
+.vscode/
+.vscode-test/
+*.vsix
+
+# OS
+.DS_Store
+*.log
+
+# Model cache (optional - comment out if you want to cache models in repo)
+.cache/
+
+# npm
+npm-debug.log*
+package-lock.json
+
+# Test artifacts
+coverage/
+.nyc_output/
+
+# Environment
+.env
+.env.local
