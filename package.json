@@ -1,0 +1,245 @@
+{
+  "name": "ragnarok",
+  "displayName": "RAGnarōk - RAG for Copilot",
+  "description": "Retrieval-Augmented Generation extension for VSCode with local sentence transformers and semantic chunking",
+  "version": "0.0.1",
+  "publisher": "hyorman",
+  "icon": "assets/icon.png",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/hyorman/ragnarok"
+  },
+  "engines": {
+    "vscode": "^1.105.0"
+  },
+  "categories": [
+    "Machine Learning",
+    "AI",
+    "Chat",
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./out/src/extension.js",
+  "contributes": {
+    "configuration": {
+      "title": "RAGnarōk",
+      "properties": {
+        "ragnarok.embeddingModel": {
+          "type": "string",
+          "default": "Xenova/all-MiniLM-L6-v2",
+          "description": "Sentence transformer model to use for embeddings",
+          "enum": [
+            "Xenova/all-MiniLM-L6-v2",
+            "Xenova/all-MiniLM-L12-v2",
+            "Xenova/paraphrase-MiniLM-L6-v2",
+            "Xenova/multi-qa-MiniLM-L6-cos-v1"
+          ]
+        },
+        "ragnarok.topK": {
+          "type": "number",
+          "default": 5,
+          "description": "Number of top results to return from RAG queries",
+          "minimum": 1,
+          "maximum": 20
+        },
+        "ragnarok.chunkSize": {
+          "type": "number",
+          "default": 512,
+          "description": "Maximum size of text chunks for embedding (in characters)",
+          "minimum": 100,
+          "maximum": 2000
+        },
+        "ragnarok.chunkOverlap": {
+          "type": "number",
+          "default": 50,
+          "description": "Overlap between chunks (in characters)",
+          "minimum": 0,
+          "maximum": 500
+        },
+        "ragnarok.pdfStructureDetection": {
+          "type": "string",
+          "default": "heuristic",
+          "description": "How to detect structure in PDF files",
+          "enum": [
+            "heuristic",
+            "none"
+          ],
+          "enumDescriptions": [
+            "Try to detect headings using heuristics (may be inaccurate)",
+            "Don't detect structure, use plain text chunking"
+          ]
+        }
+      }
+    },
+    "commands": [
+      {
+        "command": "ragnarok.createTopic",
+        "title": "Create New Topic",
+        "category": "RAG",
+        "icon": "$(add)"
+      },
+      {
+        "command": "ragnarok.deleteTopic",
+        "title": "Delete Topic",
+        "category": "RAG",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "ragnarok.listTopics",
+        "title": "List All Topics",
+        "category": "RAG"
+      },
+      {
+        "command": "ragnarok.addDocument",
+        "title": "Add Document to Topic",
+        "category": "RAG",
+        "icon": "$(file-directory-create)"
+      },
+      {
+        "command": "ragnarok.refreshTopics",
+        "title": "Refresh Topics",
+        "category": "RAG",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "ragnarok.clearModelCache",
+        "title": "Clear Model Cache",
+        "category": "RAG"
+      },
+      {
+        "command": "ragnarok.clearDatabase",
+        "title": "Clear Database",
+        "category": "RAG"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "ragnarok",
+          "title": "RAG Topics",
+          "icon": "$(database)"
+        }
+      ]
+    },
+    "views": {
+      "ragnarok": [
+        {
+          "id": "ragTopics",
+          "name": "Topics",
+          "icon": "$(files)"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "ragTopics",
+        "contents": "No topics yet. Create your first topic to start using RAG!\n[Create Topic](command:ragnarok.createTopic)\nTopics help organize your documents for semantic search and retrieval-augmented generation with Copilot."
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "ragnarok.createTopic",
+          "when": "view == ragTopics",
+          "group": "navigation@1"
+        },
+        {
+          "command": "ragnarok.refreshTopics",
+          "when": "view == ragTopics",
+          "group": "navigation@2"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "ragnarok.addDocument",
+          "when": "view == ragTopics && viewItem == topic",
+          "group": "inline@1"
+        },
+        {
+          "command": "ragnarok.deleteTopic",
+          "when": "view == ragTopics && viewItem == topic",
+          "group": "inline@2"
+        }
+      ]
+    },
+    "languageModelTools": [
+      {
+        "name": "ragQuery",
+        "tags": [
+          "documentation",
+          "search",
+          "copilot",
+          "context",
+          "rag"
+        ],
+        "toolReferenceName": "ragQuery",
+        "displayName": "RAG Query",
+        "modelDescription": "Use this tool when the user asks questions about topics they have added to the RAG system. Searches through uploaded documents and returns relevant content chunks based on semantic similarity. The tool intelligently matches the requested topic: it first tries an exact match, then finds the most semantically similar topic if no exact match exists. Always check the 'topicMatched' field in the response to see if an exact match was found or if a similar topic was used instead.",
+        "icon": "$(database)",
+        "canBeReferencedInPrompt": true,
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "topic": {
+              "type": "string",
+              "description": "The name of the topic to search within (e.g., 'React Documentation', 'Company Policy'). If exact match is not found, the most semantically similar topic will be automatically selected."
+            },
+            "query": {
+              "type": "string",
+              "description": "The search query or question to find relevant information"
+            },
+            "topK": {
+              "type": "number",
+              "description": "Number of top results to return (optional, defaults to configured value)",
+              "default": 5
+            }
+          },
+          "required": [
+            "topic",
+            "query"
+          ]
+        }
+      }
+    ]
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "compile:tests": "tsc -p ./tsconfig.test.json",
+    "watch": "tsc -watch -p ./",
+    "watch:tests": "tsc -watch -p ./tsconfig.test.json",
+    "lint": "eslint src --ext ts",
+    "package": "vsce package --allow-package-all-secrets --allow-package-env-file",
+    "test": "npm run compile && node ./out/test/runTests.js",
+    "test:unit": "mocha --require ts-node/register 'test/**/*.test.ts' --timeout 120000",
+    "test:compiled": "npm run compile && npm run compile:tests && mocha 'out/test/test/**/*.test.js' --timeout 120000",
+    "clean": "rimraf out",
+    "clean:test": "rimraf out/test"
+  },
+  "devDependencies": {
+    "@types/chai": "^4.3.11",
+    "@types/mocha": "^10.0.6",
+    "@types/node": "^20.10.0",
+    "@types/pdf-parse": "^1.1.5",
+    "@types/turndown": "^5.0.5",
+    "@types/vscode": "^1.85.0",
+    "@typescript-eslint/eslint-plugin": "^8.0.0",
+    "@typescript-eslint/parser": "^8.0.0",
+    "@vscode/test-electron": "^2.3.8",
+    "@vscode/vsce": "^3.6.2",
+    "chai": "^4.4.1",
+    "eslint": "^9.15.0",
+    "mocha": "^11.0.0",
+    "rimraf": "^6.0.1",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.3.2"
+  },
+  "dependencies": {
+    "@xenova/transformers": "^2.17.1",
+    "pdf-parse": "^1.1.1",
+    "turndown": "^7.1.2"
+  }
+}
