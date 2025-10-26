@@ -1,6 +1,6 @@
 <div align="center">
   <img src="./assets/icon.png" alt="RAGnarok icon" title="RAGnarok" width="120" height="120" />
-  <h1>RAGnarōk - RAG Tool for VSCode</h1>
+  <h1>RAGnarōk - Local RAG Tool for VSCode</h1>
 </div>
 
 A powerful VSCode extension that implements Retrieval-Augmented Generation (RAG) using local sentence transformers. This extension allows you to organize documents by topics, create embeddings locally, and enable Copilot or other LLM agents to query your custom knowledge base.
@@ -60,7 +60,7 @@ Once documents are added, you can ask Copilot questions about your topics:
 "Using the RAG query tool, search the 'React Documentation' topic for information about hooks"
 ```
 
-Copilot will use the `copilot_rag_query` tool to find relevant content with full heading context (e.g., "React Hooks → useState → Basic Usage") and provide accurate, contextual answers.
+Copilot will use the `ragQuery` tool to find relevant content with full heading context (e.g., "React Hooks → useState → Basic Usage") and provide accurate, contextual answers.
 
 ## Configuration
 
@@ -91,18 +91,19 @@ Models are downloaded automatically on first use and cached locally.
 | `RAG: Delete Topic` | Delete a topic and all its documents |
 | `RAG: List All Topics` | Show all available topics |
 | `RAG: Add Document to Topic` | Add a PDF, Markdown, or HTML document |
+| `RAG: Refresh Topics` | Refresh the topics tree view |
 | `RAG: Clear Model Cache` | Clear the embedding model cache |
-| `RAG: Show Status` | Display database statistics |
+| `RAG: Clear Database` | Clear the entire vector database |
 
 ## LLM Tool API
 
-The extension registers a language model tool called `copilot_rag_query` that can be used by Copilot or other LLM agents.
+The extension registers a language model tool called `ragQuery` that can be used by Copilot or other LLM agents.
 
 ### Tool Schema
 
 ```typescript
 {
-  name: "copilot_rag_query",
+  name: "ragQuery",
   parameters: {
     topic: string,      // Topic name to search within
     query: string,      // Search query/question
@@ -118,7 +119,7 @@ When you ask Copilot a question like:
 
 Copilot can internally call:
 ```javascript
-copilot_rag_query({
+ragQuery({
   topic: "React Documentation",
   query: "useEffect hook usage and examples"
 })
