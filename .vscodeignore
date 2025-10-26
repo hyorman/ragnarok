@@ -1,27 +1,42 @@
+# Development and test files
 .vscode/**
 .vscode-test/**
+test/**
+scripts/**
+
+# Source files (compiled output in /out is included)
 src/**
+**/*.ts
+**/*.map
+
+# Configuration files
 .gitignore
 .yarnrc
 **/tsconfig.json
+**/.tsconfig.json
 **/.eslintrc.json
-**/*.map
-**/*.ts
-**/*.tsconfig.json
+
+# Dependencies - exclude all node_modules by default
 node_modules/**
-!node_modules/@xenova/transformers/**
-!node_modules/@mixmark-io/domino/**
+
+# Runtime dependencies - include these for the extension to work
+!node_modules/@huggingface/transformers/**
 !node_modules/onnxruntime-common/**
 !node_modules/onnxruntime-node/**
 !node_modules/onnxruntime-web/**
+!node_modules/@mixmark-io/domino/**
 !node_modules/pdf-parse/**
+!node_modules/turndown/**
+
+# Dependencies for sharp (image processing)
 !node_modules/sharp/**
+!node_modules/@img/**
 !node_modules/detect-libc/**
 !node_modules/color/**
 !node_modules/color-convert/**
 !node_modules/color-string/**
 !node_modules/color-name/**
 !node_modules/simple-swizzle/**
-!node_modules/semver/**
-!node_modules/turndown/**
 
+# Dependencies for semver
+!node_modules/semver/**

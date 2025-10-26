@@ -3,7 +3,7 @@
  */
 
 import * as vscode from 'vscode';
-import { pipeline, FeatureExtractionPipeline, env } from '@xenova/transformers';
+import { pipeline, FeatureExtractionPipeline, env } from '@huggingface/transformers';
 import { CONFIG } from './constants';
 
 export class EmbeddingService {
