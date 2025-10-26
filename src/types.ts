@@ -38,10 +38,18 @@ export interface TextChunk {
   };
 }
 
-export interface VectorDatabase {
-  topics: { [topicId: string]: Topic };
+// Per-topic storage structure
+export interface TopicData {
+  topic: Topic;
   documents: { [documentId: string]: Document };
   chunks: { [chunkId: string]: TextChunk };
+  modelName: string;
+  lastUpdated: number;
+}
+
+// Topics index file
+export interface TopicsIndex {
+  topics: { [topicId: string]: Topic };
   modelName: string;
   lastUpdated: number;
 }

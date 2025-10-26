@@ -13,7 +13,7 @@ A powerful VSCode extension that implements Retrieval-Augmented Generation (RAG)
 - 🔍 **Semantic Chunking**: Hierarchical chunking based on document structure (headings) with smart boundaries and overlap
 - 🗂️ **Context Preservation**: Each chunk includes its heading path (e.g., "Memory Allocation → Malloc → Performance")
 - 🤖 **Copilot Integration**: Register as an LLM tool that Copilot can query
-- 🔒 **Secure Storage**: Vector database stored in VSCode secret storage
+- 💾 **Efficient Storage**: Per-topic file storage - only loads what you need
 - ⚙️ **Configurable**: Choose from multiple embedding models
 
 ## Installation
@@ -157,7 +157,12 @@ The tool returns:
 │        │               │               │        │
 │  ┌─────┴───────────────┴───────────────┴─────┐  │
 │  │         Vector Database Service           │  │
-│  │         (VSCode Secret Storage)           │  │
+│  │      (Per-Topic JSON File Storage)        │  │
+│  │  ┌────────────────────────────────────┐   │  │
+│  │  │ topics.json (index)                │   │  │
+│  │  │ topic-abc123.json (embeddings)     │   │  │
+│  │  │ topic-def456.json (embeddings)     │   │  │
+│  │  └────────────────────────────────────┘   │  │
 │  └─────────────────┬─────────────────────────┘  │
 │                    │                            │
 │  ┌─────────────────┴─────────────────────────┐  │
@@ -182,7 +187,7 @@ The tool returns:
 
 2. **Embedding Generation**: Each chunk is converted to a vector embedding using a sentence transformer model running locally via transformers.js.
 
-3. **Storage**: Embeddings and metadata (including heading paths) are stored in VSCode's secure secret storage as a JSON-based vector database.
+3. **Storage**: Embeddings and metadata (including heading paths) are stored in per-topic JSON files in VSCode's extension storage directory. Each topic gets its own file for efficient loading and storage.
 
 4. **Query Processing**: When queried (via the LLM tool or directly):
    - The query is converted to an embedding
@@ -195,8 +200,9 @@ The tool returns:
 
 - **Model Download**: First use requires downloading the model (~100MB for default model). Subsequent uses are instant.
 - **Embedding Speed**: ~10-50 chunks/second depending on hardware (CPU-based)
-- **Storage**: Vector database stored in VSCode secrets has ~10MB soft limit
-- **Memory**: Models use ~500MB RAM when active
+- **Storage**: Each topic stored in its own JSON file for efficient access
+- **Memory**: Models use ~500MB RAM when active. Only loaded topics consume additional memory.
+- **Scalability**: Per-topic files mean better performance - only loads the data you're querying
 
 ## Troubleshooting
 
@@ -224,11 +230,6 @@ The tool returns:
 - Ensure you have Copilot enabled
 - Explicitly mention the tool in your prompt
 - Verify topics have documents: `RAG: List All Topics`
-
-### Large database size warning
-- Delete unused topics: `RAG: Delete Topic`
-- Consider splitting into multiple smaller topics
-- Use smaller chunk sizes in settings
 
 ## Development
 
@@ -263,7 +264,7 @@ See LICENSE file for details.
 
 ## Acknowledgments
 
-- [Transformers.js](https://github.com/xenova/transformers.js) for local ML inference
+- [Transformers.js](https://github.com/huggingface/transformers.js) for local ML inference
 - [Hugging Face](https://huggingface.co/) for sentence transformer models
 - VSCode Language Model API for LLM tool integration
 

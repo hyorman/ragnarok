@@ -9,7 +9,8 @@
 export const EXTENSION = {
   ID: 'ragnarok',
   DISPLAY_NAME: 'RAGnarōk',
-  SECRET_NAME: 'ragnarok-database',
+  DATABASE_DIR: 'database',
+  TOPICS_INDEX_FILENAME: 'topics.json',
 } as const;
 
 /**
@@ -58,10 +59,4 @@ export const TOOLS = {
   RAG_QUERY: 'ragQuery',
 } as const;
 
-/**
- * Database limits
- */
-export const LIMITS = {
-  MAX_DATABASE_SIZE: 10 * 1024 * 1024, // 10MB soft limit
-} as const;
 
