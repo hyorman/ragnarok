@@ -1,17 +1,22 @@
 /**
- * Vector database implementation using VSCode Secret Storage
+ * Vector database implementation using per-topic file-based storage
+ * Each topic gets its own JSON file with documents and embeddings
  */
 
 import * as vscode from 'vscode';
-import { VectorDatabase, Topic, Document, TextChunk, SearchResult } from './types';
+import * as fs from 'fs/promises';
+import * as path from 'path';
+import { Topic, Document, TextChunk, SearchResult, TopicData, TopicsIndex } from './types';
 import { EmbeddingService } from './embeddingService';
-import { EXTENSION, LIMITS } from './constants';
+import { EXTENSION } from './constants';
 
 export class VectorDatabaseService {
   private static instance: VectorDatabaseService;
   private context: vscode.ExtensionContext;
-  private database: VectorDatabase | null = null;
+  private topicsIndex: TopicsIndex | null = null;
   private embeddingService: EmbeddingService;
+  // Cache for loaded topic data
+  private topicCache: Map<string, TopicData> = new Map();
 
   private constructor(context: vscode.ExtensionContext) {
     this.context = context;
@@ -33,50 +38,126 @@ export class VectorDatabaseService {
   }
 
   /**
-   * Load database from secret storage
+   * Get the database directory path
    */
-  public async loadDatabase(): Promise<void> {
+  private getDatabaseDir(): string {
+    return path.join(this.context.globalStorageUri.fsPath, EXTENSION.DATABASE_DIR);
+  }
+
+  /**
+   * Get the topics index file path
+   */
+  private getTopicsIndexPath(): string {
+    return path.join(this.getDatabaseDir(), EXTENSION.TOPICS_INDEX_FILENAME);
+  }
+
+  /**
+   * Get the file path for a specific topic's data
+   */
+  private getTopicDataPath(topicId: string): string {
+    return path.join(this.getDatabaseDir(), `topic-${topicId}.json`);
+  }
+
+  /**
+   * Ensure storage directory exists
+   */
+  private async ensureStorageDirectory(): Promise<void> {
     try {
-      const data = await this.context.secrets.get(EXTENSION.SECRET_NAME);
-      if (data) {
-        this.database = JSON.parse(data);
-      } else {
-        // Initialize empty database
-        this.database = {
+      await fs.mkdir(this.getDatabaseDir(), { recursive: true });
+    } catch (error) {
+      // Directory might already exist, that's fine
+    }
+  }
+
+
+  /**
+   * Load topics index from file
+   */
+  private async loadTopicsIndex(): Promise<void> {
+    try {
+      const indexPath = this.getTopicsIndexPath();
+      const data = await fs.readFile(indexPath, 'utf-8');
+      this.topicsIndex = JSON.parse(data);
+    } catch (error: any) {
+      if (error.code === 'ENOENT') {
+        // Initialize empty index
+        this.topicsIndex = {
           topics: {},
-          documents: {},
-          chunks: {},
           modelName: this.embeddingService.getCurrentModel() || 'unknown',
           lastUpdated: Date.now(),
         };
-        await this.saveDatabase();
+        await this.saveTopicsIndex();
+      } else {
+        throw error;
       }
-    } catch (error) {
-      vscode.window.showErrorMessage(`Failed to load database: ${error}`);
+    }
+  }
+
+  /**
+   * Save topics index to file
+   */
+  private async saveTopicsIndex(): Promise<void> {
+    if (!this.topicsIndex) {
+      throw new Error('Topics index not initialized');
+    }
+
+    await this.ensureStorageDirectory();
+    this.topicsIndex.lastUpdated = Date.now();
+    const data = JSON.stringify(this.topicsIndex, null, 2);
+    const indexPath = this.getTopicsIndexPath();
+    await fs.writeFile(indexPath, data, 'utf-8');
+  }
+
+  /**
+   * Load a specific topic's data from file
+   */
+  private async loadTopicData(topicId: string): Promise<TopicData> {
+    // Check cache first
+    if (this.topicCache.has(topicId)) {
+      return this.topicCache.get(topicId)!;
+    }
+
+    try {
+      const topicPath = this.getTopicDataPath(topicId);
+      const data = await fs.readFile(topicPath, 'utf-8');
+      const topicData: TopicData = JSON.parse(data);
+
+      // Cache for future use
+      this.topicCache.set(topicId, topicData);
+      return topicData;
+    } catch (error: any) {
+      if (error.code === 'ENOENT') {
+        // Topic file doesn't exist - this shouldn't happen if index is correct
+        throw new Error(`Topic data file not found for topic ID: ${topicId}`);
+      }
       throw error;
     }
   }
 
   /**
-   * Save database to secret storage
+   * Save a specific topic's data to file
    */
-  public async saveDatabase(): Promise<void> {
-    if (!this.database) {
-      throw new Error('Database not initialized');
-    }
+  private async saveTopicData(topicId: string, topicData: TopicData): Promise<void> {
+    await this.ensureStorageDirectory();
+    topicData.lastUpdated = Date.now();
 
+    const data = JSON.stringify(topicData, null, 2);
+    const topicPath = this.getTopicDataPath(topicId);
+    await fs.writeFile(topicPath, data, 'utf-8');
+
+    // Update cache
+    this.topicCache.set(topicId, topicData);
+  }
+
+  /**
+   * Initialize database - load topics index
+   */
+  public async loadDatabase(): Promise<void> {
     try {
-      this.database.lastUpdated = Date.now();
-      const data = JSON.stringify(this.database);
-
-      // VSCode secrets have size limits, check if we're within limits
-      if (data.length > LIMITS.MAX_DATABASE_SIZE) {
-        vscode.window.showWarningMessage('Database is getting large. Consider removing old topics.');
-      }
-
-      await this.context.secrets.store(EXTENSION.SECRET_NAME, data);
+      await this.ensureStorageDirectory();
+      await this.loadTopicsIndex();
     } catch (error) {
-      vscode.window.showErrorMessage(`Failed to save database: ${error}`);
+      vscode.window.showErrorMessage(`Failed to load database: ${error}`);
       throw error;
     }
   }
@@ -85,12 +166,12 @@ export class VectorDatabaseService {
    * Create a new topic
    */
   public async createTopic(name: string, description?: string): Promise<Topic> {
-    if (!this.database) {
+    if (!this.topicsIndex) {
       await this.loadDatabase();
     }
 
     // Check if topic already exists
-    const existingTopic = Object.values(this.database!.topics).find(
+    const existingTopic = Object.values(this.topicsIndex!.topics).find(
       (t) => t.name.toLowerCase() === name.toLowerCase()
     );
 
@@ -107,8 +188,19 @@ export class VectorDatabaseService {
       documentCount: 0,
     };
 
-    this.database!.topics[topic.id] = topic;
-    await this.saveDatabase();
+    // Add to index
+    this.topicsIndex!.topics[topic.id] = topic;
+    await this.saveTopicsIndex();
+
+    // Create empty topic data file
+    const topicData: TopicData = {
+      topic,
+      documents: {},
+      chunks: {},
+      modelName: this.embeddingService.getCurrentModel() || 'unknown',
+      lastUpdated: Date.now(),
+    };
+    await this.saveTopicData(topic.id, topicData);
 
     return topic;
   }
@@ -117,21 +209,21 @@ export class VectorDatabaseService {
    * Get all topics
    */
   public async getTopics(): Promise<Topic[]> {
-    if (!this.database) {
+    if (!this.topicsIndex) {
       await this.loadDatabase();
     }
-    return Object.values(this.database!.topics);
+    return Object.values(this.topicsIndex!.topics);
   }
 
   /**
    * Get a topic by name
    */
   public async getTopicByName(name: string): Promise<Topic | null> {
-    if (!this.database) {
+    if (!this.topicsIndex) {
       await this.loadDatabase();
     }
 
-    const topic = Object.values(this.database!.topics).find(
+    const topic = Object.values(this.topicsIndex!.topics).find(
       (t) => t.name.toLowerCase() === name.toLowerCase()
     );
 
@@ -142,28 +234,24 @@ export class VectorDatabaseService {
    * Delete a topic and all its documents and chunks
    */
   public async deleteTopic(topicId: string): Promise<void> {
-    if (!this.database) {
+    if (!this.topicsIndex) {
       await this.loadDatabase();
     }
 
-    // Delete all chunks associated with this topic
-    Object.keys(this.database!.chunks).forEach((chunkId) => {
-      if (this.database!.chunks[chunkId].topicId === topicId) {
-        delete this.database!.chunks[chunkId];
-      }
-    });
+    // Delete the topic from index
+    delete this.topicsIndex!.topics[topicId];
+    await this.saveTopicsIndex();
 
-    // Delete all documents associated with this topic
-    Object.keys(this.database!.documents).forEach((docId) => {
-      if (this.database!.documents[docId].topicId === topicId) {
-        delete this.database!.documents[docId];
-      }
-    });
+    // Delete the topic data file
+    try {
+      const topicPath = this.getTopicDataPath(topicId);
+      await fs.unlink(topicPath);
+    } catch (error) {
+      console.error(`Failed to delete topic file for ${topicId}:`, error);
+    }
 
-    // Delete the topic
-    delete this.database!.topics[topicId];
-
-    await this.saveDatabase();
+    // Remove from cache
+    this.topicCache.delete(topicId);
   }
 
   /**
@@ -176,13 +264,16 @@ export class VectorDatabaseService {
     fileType: 'pdf' | 'markdown' | 'html',
     chunks: TextChunk[]
   ): Promise<Document> {
-    if (!this.database) {
+    if (!this.topicsIndex) {
       await this.loadDatabase();
     }
 
-    if (!this.database!.topics[topicId]) {
+    if (!this.topicsIndex!.topics[topicId]) {
       throw new Error('Topic not found');
     }
+
+    // Load topic data
+    const topicData = await this.loadTopicData(topicId);
 
     const document: Document = {
       id: this.generateId(),
@@ -194,19 +285,31 @@ export class VectorDatabaseService {
       chunkCount: chunks.length,
     };
 
-    // Add document
-    this.database!.documents[document.id] = document;
+    // Add document to topic data
+    topicData.documents[document.id] = document;
 
-    // Add chunks
+    // Add chunks to topic data
     chunks.forEach((chunk) => {
-      this.database!.chunks[chunk.id] = chunk;
+      topicData.chunks[chunk.id] = chunk;
     });
 
-    // Update topic
-    this.database!.topics[topicId].documentCount++;
-    this.database!.topics[topicId].updatedAt = Date.now();
+    // Update topic in topicData and index
+    topicData.topic.documentCount++;
+    topicData.topic.updatedAt = Date.now();
+    this.topicsIndex!.topics[topicId] = topicData.topic;
 
-    await this.saveDatabase();
+    // Update model name in both places now that we have embeddings
+    const currentModel = this.embeddingService.getCurrentModel();
+    if (currentModel) {
+      topicData.modelName = currentModel;
+      this.topicsIndex!.modelName = currentModel;
+    }
+
+    // Save both index and topic data
+    await Promise.all([
+      this.saveTopicsIndex(),
+      this.saveTopicData(topicId, topicData)
+    ]);
 
     return document;
   }
@@ -219,14 +322,15 @@ export class VectorDatabaseService {
     queryEmbedding: number[],
     topK: number
   ): Promise<SearchResult[]> {
-    if (!this.database) {
+    if (!this.topicsIndex) {
       await this.loadDatabase();
     }
 
+    // Load topic data (only the topic we're searching)
+    const topicData = await this.loadTopicData(topicId);
+
     // Get all chunks for this topic
-    const topicChunks = Object.values(this.database!.chunks).filter(
-      (chunk) => chunk.topicId === topicId
-    );
+    const topicChunks = Object.values(topicData.chunks);
 
     if (topicChunks.length === 0) {
       return [];
@@ -255,36 +359,20 @@ export class VectorDatabaseService {
    * Get documents for a topic
    */
   public async getDocumentsByTopic(topicId: string): Promise<Document[]> {
-    if (!this.database) {
+    if (!this.topicsIndex) {
       await this.loadDatabase();
     }
 
-    return Object.values(this.database!.documents).filter(
-      (doc) => doc.topicId === topicId
-    );
+    // Load topic data
+    const topicData = await this.loadTopicData(topicId);
+    return Object.values(topicData.documents);
   }
 
   /**
-   * Get database statistics
+   * Get the database directory location
    */
-  public async getStats(): Promise<{
-    topicCount: number;
-    documentCount: number;
-    chunkCount: number;
-    modelName: string;
-    lastUpdated: number;
-  }> {
-    if (!this.database) {
-      await this.loadDatabase();
-    }
-
-    return {
-      topicCount: Object.keys(this.database!.topics).length,
-      documentCount: Object.keys(this.database!.documents).length,
-      chunkCount: Object.keys(this.database!.chunks).length,
-      modelName: this.database!.modelName,
-      lastUpdated: this.database!.lastUpdated,
-    };
+  public getDatabaseLocation(): string {
+    return this.getDatabaseDir();
   }
 
   /**
@@ -298,14 +386,28 @@ export class VectorDatabaseService {
    * Clear entire database
    */
   public async clearDatabase(): Promise<void> {
-    this.database = {
+    // Delete all topic files
+    if (this.topicsIndex) {
+      for (const topicId of Object.keys(this.topicsIndex.topics)) {
+        try {
+          const topicPath = this.getTopicDataPath(topicId);
+          await fs.unlink(topicPath);
+        } catch (error) {
+          console.error(`Failed to delete topic file ${topicId}:`, error);
+        }
+      }
+    }
+
+    // Clear cache
+    this.topicCache.clear();
+
+    // Reset index
+    this.topicsIndex = {
       topics: {},
-      documents: {},
-      chunks: {},
       modelName: this.embeddingService.getCurrentModel() || 'unknown',
       lastUpdated: Date.now(),
     };
-    await this.saveDatabase();
+    await this.saveTopicsIndex();
   }
 }
 
