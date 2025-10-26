@@ -71,6 +71,82 @@
             "Try to detect headings using heuristics (may be inaccurate)",
             "Don't detect structure, use plain text chunking"
           ]
+        },
+        "ragnarok.useAgenticMode": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "**Enable Agentic RAG:** Multi-step retrieval with query planning, iterative refinement, and result evaluation. When disabled, uses simple single-shot retrieval.\n\n📚 [Learn more about Agentic RAG](https://github.com/hyorman/ragnarok#agentic-rag)",
+          "order": 10
+        },
+        "ragnarok.agenticMaxIterations": {
+          "type": "number",
+          "default": 3,
+          "markdownDescription": "Maximum retrieval iterations in agentic mode. Higher = more thorough but slower.\n\n⚠️ _Only applies when Agentic Mode is enabled_",
+          "minimum": 1,
+          "maximum": 10,
+          "order": 11
+        },
+        "ragnarok.agenticConfidenceThreshold": {
+          "type": "number",
+          "default": 0.7,
+          "markdownDescription": "Confidence threshold (0-1) to stop retrieval. Lower = more iterations, higher = stops earlier.\n\n⚠️ _Only applies when Agentic Mode is enabled_",
+          "minimum": 0,
+          "maximum": 1,
+          "order": 12
+        },
+        "ragnarok.agenticQueryDecomposition": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Decompose complex queries into sub-queries. Recommended for comparisons and multi-part questions.\n\n⚠️ _Only applies when Agentic Mode is enabled_",
+          "order": 13
+        },
+        "ragnarok.agenticIterativeRefinement": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Generate follow-up queries to fill information gaps detected during retrieval.\n\n⚠️ _Only applies when Agentic Mode is enabled_",
+          "order": 14
+        },
+        "ragnarok.agenticRetrievalStrategy": {
+          "type": "string",
+          "default": "hybrid",
+          "markdownDescription": "Search strategy for agentic mode:\n- **hybrid** (recommended): 70% semantic + 30% keyword\n- **vector**: Pure semantic similarity\n\n⚠️ _Only applies when Agentic Mode is enabled_",
+          "enum": [
+            "vector",
+            "hybrid"
+          ],
+          "enumDescriptions": [
+            "Pure semantic search using embeddings only",
+            "Hybrid: Combines semantic + keyword matching (recommended)"
+          ],
+          "order": 15
+        },
+        "ragnarok.agenticUseLLM": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "**Use LLM (Copilot) for intelligent planning:** Uses Copilot for query decomposition and result evaluation instead of rule-based heuristics.\n\n**Requirements:**\n- ✅ GitHub Copilot subscription\n- ✅ GitHub Copilot extension\n\n**Trade-offs:**\n- ✅ Much more intelligent\n- ✅ Context-aware planning\n- ⚠️ 2-3x slower\n- ⚠️ Uses Copilot API quota\n\n⚠️ _Only applies when Agentic Mode is enabled_",
+          "order": 16
+        },
+        "ragnarok.agenticLLMModel": {
+          "type": "string",
+          "default": "gpt-4o",
+          "markdownDescription": "**LLM model to use** for query planning and evaluation:\n\n- **gpt-4o** (default): Most intelligent, best reasoning\n- **gpt-4o-mini**: Faster, cheaper, still very capable\n- **gpt-3.5-turbo**: Fastest, most economical\n\n**Performance:**\n- gpt-4o: Best quality, slower, more tokens\n- gpt-4o-mini: Good balance\n- gpt-3.5-turbo: Fast, lower quality\n\n⚠️ _Only applies when LLM Mode is enabled_",
+          "enum": [
+            "gpt-4o",
+            "gpt-4o-mini",
+            "gpt-3.5-turbo"
+          ],
+          "enumDescriptions": [
+            "GPT-4o: Most intelligent, best for complex reasoning (slower, more expensive)",
+            "GPT-4o-mini: Balanced performance and cost (recommended for most uses)",
+            "GPT-3.5 Turbo: Fastest and most economical (lower quality reasoning)"
+          ],
+          "order": 17
+        },
+        "ragnarok.agenticIncludeWorkspaceContext": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "**Include workspace context:** Pass selected code, active file, imports, and symbols to Copilot (like #codebase).\n\n**Includes:**\n- Selected code (max 1000 chars)\n- File imports and symbols\n- Workspace name\n\n**Privacy:** Only relative paths, no sensitive data\n\n⚠️ _Only applies when LLM Mode is enabled_",
+          "order": 18
         }
       }
     },
@@ -177,7 +253,7 @@
         ],
         "toolReferenceName": "ragQuery",
         "displayName": "RAG Query",
-        "modelDescription": "Use this tool when the user asks questions about topics they have added to the RAG system. Searches through uploaded documents and returns relevant content chunks based on semantic similarity. The tool intelligently matches the requested topic: it first tries an exact match, then finds the most semantically similar topic if no exact match exists. Always check the 'topicMatched' field in the response to see if an exact match was found or if a similar topic was used instead.",
+        "modelDescription": "Use this tool when the user asks questions about topics they have added to the RAG system. Supports both simple single-shot retrieval and advanced agentic RAG with multi-step query planning, iterative refinement, and intelligent result evaluation. The tool intelligently matches the requested topic: it first tries an exact match, then finds the most semantically similar topic if no exact match exists. In agentic mode, complex queries are automatically decomposed into sub-queries for comprehensive information gathering. Always check the 'topicMatched' field and 'agenticMetadata' in the response.",
         "icon": "$(database)",
         "canBeReferencedInPrompt": true,
         "inputSchema": {
@@ -195,6 +271,41 @@
               "type": "number",
               "description": "Number of top results to return (optional, defaults to configured value)",
               "default": 5
+            },
+            "useAgenticMode": {
+              "type": "boolean",
+              "description": "Enable agentic RAG with multi-step query planning and iterative retrieval (optional, defaults to extension settings)"
+            },
+            "agenticConfig": {
+              "type": "object",
+              "description": "Configuration for agentic RAG behavior (optional)",
+              "properties": {
+                "maxIterations": {
+                  "type": "number",
+                  "description": "Maximum retrieval iterations (1-10)"
+                },
+                "confidenceThreshold": {
+                  "type": "number",
+                  "description": "Minimum confidence to stop retrieval (0-1)"
+                },
+                "enableQueryDecomposition": {
+                  "type": "boolean",
+                  "description": "Decompose complex queries into sub-queries"
+                },
+                "enableIterativeRefinement": {
+                  "type": "boolean",
+                  "description": "Enable follow-up queries based on gaps"
+                },
+                "retrievalStrategy": {
+                  "type": "string",
+                  "enum": ["vector", "hybrid"],
+                  "description": "Search strategy: 'vector' (semantic) or 'hybrid' (semantic + keyword)"
+                },
+                "useLLM": {
+                  "type": "boolean",
+                  "description": "Use LLM for intelligent query planning and evaluation (requires Copilot, slower but more intelligent)"
+                }
+              }
             }
           },
           "required": [

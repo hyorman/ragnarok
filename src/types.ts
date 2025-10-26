@@ -64,6 +64,16 @@ export interface RAGQueryParams {
   topic: string;
   query: string;
   topK?: number;
+  // Agentic RAG options
+  useAgenticMode?: boolean;
+  agenticConfig?: {
+    maxIterations?: number;
+    confidenceThreshold?: number;
+    enableQueryDecomposition?: boolean;
+    enableIterativeRefinement?: boolean;
+    retrievalStrategy?: 'vector' | 'hybrid';
+    useLLM?: boolean;  // Use LLM for query planning and result evaluation
+  };
 }
 
 export interface RAGQueryResult {
@@ -83,5 +93,20 @@ export interface RAGQueryResult {
   topicMatched: 'exact' | 'similar' | 'fallback';
   requestedTopic?: string;
   availableTopics?: string[];
+  // Agentic RAG results
+  agenticMetadata?: {
+    mode: 'simple' | 'agentic';
+    steps?: Array<{
+      stepNumber: number;
+      query: string;
+      strategy: string;
+      resultsCount: number;
+      confidence: number;
+      reasoning: string;
+    }>;
+    totalIterations?: number;
+    queryComplexity?: 'simple' | 'moderate' | 'complex';
+    confidence?: number;
+  };
 }
 

@@ -23,6 +23,16 @@ export const CONFIG = {
   CHUNK_SIZE: 'ragnarok.chunkSize',
   CHUNK_OVERLAP: 'ragnarok.chunkOverlap',
   PDF_STRUCTURE_DETECTION: 'ragnarok.pdfStructureDetection',
+  // Agentic RAG configuration
+  USE_AGENTIC_MODE: 'useAgenticMode',
+  AGENTIC_MAX_ITERATIONS: 'agenticMaxIterations',
+  AGENTIC_CONFIDENCE_THRESHOLD: 'agenticConfidenceThreshold',
+  AGENTIC_QUERY_DECOMPOSITION: 'agenticQueryDecomposition',
+  AGENTIC_ITERATIVE_REFINEMENT: 'agenticIterativeRefinement',
+  AGENTIC_RETRIEVAL_STRATEGY: 'agenticRetrievalStrategy',
+  AGENTIC_USE_LLM: 'agenticUseLLM',
+  AGENTIC_LLM_MODEL: 'agenticLLMModel',
+  AGENTIC_INCLUDE_WORKSPACE: 'agenticIncludeWorkspaceContext',
 } as const;
 
 /**
