@@ -1,6 +1,6 @@
 {
   "name": "ragnarok",
-  "displayName": "RAGnarōk - RAG for Copilot",
+  "displayName": "RAGnarōk - Local RAG for Copilot",
   "description": "Retrieval-Augmented Generation extension for VSCode with local sentence transformers and semantic chunking",
   "version": "0.0.1",
   "publisher": "hyorman",
@@ -216,6 +216,7 @@
     "test": "npm run compile && node ./out/test/runTests.js",
     "test:unit": "mocha --require ts-node/register 'test/**/*.test.ts' --timeout 120000",
     "test:compiled": "npm run compile && npm run compile:tests && mocha 'out/test/test/**/*.test.js' --timeout 120000",
+    "inspect:chunks": "npm run compile && node scripts/inspect-chunks.js",
     "clean": "rimraf out",
     "clean:test": "rimraf out/test"
   },

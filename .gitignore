@@ -3,6 +3,7 @@ out/
 *.js
 *.js.map
 !test/fixtures/**
+!scripts/**
 
 # Dependencies
 node_modules/
@@ -26,6 +27,7 @@ package-lock.json
 # Test artifacts
 coverage/
 .nyc_output/
+test/chunk-output/
 
 # Environment
 .env
