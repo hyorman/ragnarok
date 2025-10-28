@@ -3,11 +3,12 @@
  * Manages multi-step retrieval, query planning, and result evaluation
  */
 
-import * as vscode from 'vscode';
 import { EmbeddingService } from './embeddingService';
 import { VectorDatabaseService } from './vectorDatabase';
-import { QueryPlanner, QueryPlan } from './queryPlanner';
-import { ResultEvaluator, EvaluationResult } from './resultEvaluator';
+import { QueryPlanner } from './queryPlanner';
+import { QueryPlan, IQueryPlanner } from './queryPlannerBase';
+import { ResultEvaluator } from './resultEvaluator';
+import { IResultEvaluator } from './resultEvaluatorBase';
 import { LLMQueryPlanner } from './llmQueryPlanner';
 import { LLMResultEvaluator } from './llmResultEvaluator';
 import { RetrievalStrategy, VectorSearchStrategy, HybridSearchStrategy } from './retrievalStrategy';
@@ -45,8 +46,10 @@ export class AgentOrchestrator {
   private vectorDb: VectorDatabaseService;
   private heuristicQueryPlanner: QueryPlanner;
   private heuristicResultEvaluator: ResultEvaluator;
-  private llmQueryPlanner: LLMQueryPlanner;
-  private llmResultEvaluator: LLMResultEvaluator;
+  private _llmQueryPlanner?: LLMQueryPlanner;
+  private _llmResultEvaluator?: LLMResultEvaluator;
+  private activePlanner?: IQueryPlanner;
+  private activeEvaluator?: IResultEvaluator;
   private retrievalStrategies: Map<string, RetrievalStrategy>;
 
   constructor() {
@@ -56,14 +59,28 @@ export class AgentOrchestrator {
     // Initialize both heuristic and LLM-based components
     this.heuristicQueryPlanner = new QueryPlanner();
     this.heuristicResultEvaluator = new ResultEvaluator();
-    this.llmQueryPlanner = new LLMQueryPlanner();
-    this.llmResultEvaluator = new LLMResultEvaluator();
 
     this.retrievalStrategies = new Map();
 
     // Register available retrieval strategies
     this.retrievalStrategies.set('vector', new VectorSearchStrategy(this.vectorDb, this.embeddingService));
     this.retrievalStrategies.set('hybrid', new HybridSearchStrategy(this.vectorDb, this.embeddingService));
+  }
+
+  /** Lazily instantiate LLM Query Planner on first access */
+  private get llmQueryPlanner(): LLMQueryPlanner {
+    if (!this._llmQueryPlanner) {
+      this._llmQueryPlanner = new LLMQueryPlanner();
+    }
+    return this._llmQueryPlanner;
+  }
+
+  /** Lazily instantiate LLM Result Evaluator on first access */
+  private get llmResultEvaluator(): LLMResultEvaluator {
+    if (!this._llmResultEvaluator) {
+      this._llmResultEvaluator = new LLMResultEvaluator();
+    }
+    return this._llmResultEvaluator;
   }
 
   /**
@@ -86,13 +103,21 @@ export class AgentOrchestrator {
     let currentIteration = 0;
 
     // Select planner and evaluator based on config
-    const queryPlanner = config.useLLM ? this.llmQueryPlanner : this.heuristicQueryPlanner;
-    const resultEvaluator = config.useLLM ? this.llmResultEvaluator : this.heuristicResultEvaluator;
+    this.activePlanner = config.useLLM ? this.llmQueryPlanner : this.heuristicQueryPlanner;
+    this.activeEvaluator = config.useLLM ? this.llmResultEvaluator : this.heuristicResultEvaluator;
 
     // Step 1: Query Planning (with context if using LLM)
-    const queryPlan = config.useLLM
-      ? await this.llmQueryPlanner.createPlan(query, config.enableQueryDecomposition, context, workspaceContext)
-      : await this.heuristicQueryPlanner.createPlan(query, config.enableQueryDecomposition);
+    let queryPlan: QueryPlan;
+    if (config.enableQueryDecomposition) {
+      queryPlan = await this.activePlanner.createPlan(query, context, workspaceContext);
+    } else {
+      queryPlan = {
+        originalQuery: query,
+        subQueries: [{ query, reasoning: 'Direct query execution', topK: 5 }],
+        strategy: 'sequential',
+        complexity: 'simple',
+      };
+    }
 
     // Step 2: Execute retrieval for each sub-query
     for (const subQuery of queryPlan.subQueries) {
@@ -117,10 +142,7 @@ export class AgentOrchestrator {
         previousSteps: steps.map(s => `Step ${s.stepNumber}: ${s.query} (${s.resultsCount} results)`),
       } : undefined;
 
-      const evaluation = await (config.useLLM
-        ? this.llmResultEvaluator.evaluate(subQuery.query, searchResults, config.confidenceThreshold, evalContext)
-        : this.heuristicResultEvaluator.evaluate(subQuery.query, searchResults, config.confidenceThreshold)
-      );
+      const evaluation = await this.activeEvaluator!.evaluate(subQuery.query, searchResults, config.confidenceThreshold, evalContext);
 
       // Record step
       steps.push({
@@ -136,13 +158,13 @@ export class AgentOrchestrator {
       allResults.push(...searchResults);
 
       // Iterative refinement: check if we need more information
-      if (config.enableIterativeRefinement && !evaluation.isComplete) {
+        if (config.enableIterativeRefinement && !evaluation.isComplete) {
         // Generate follow-up query based on gaps
-        const followUpQuery = await queryPlanner.generateFollowUpQuery(
-          query,
-          allResults,
-          evaluation.gaps
-        );
+          const followUpQuery = await this.activePlanner.generateFollowUpQuery(
+            query,
+            allResults,
+            evaluation.gaps
+          );
 
         if (followUpQuery && currentIteration < config.maxIterations) {
           currentIteration++;
@@ -153,10 +175,7 @@ export class AgentOrchestrator {
             previousSteps: steps.map(s => `Step ${s.stepNumber}: ${s.query} (${s.resultsCount} results)`),
           } : undefined;
 
-          const followUpEval = await (config.useLLM
-            ? this.llmResultEvaluator.evaluate(followUpQuery.query, followUpResults, config.confidenceThreshold, followUpEvalContext)
-            : this.heuristicResultEvaluator.evaluate(followUpQuery.query, followUpResults, config.confidenceThreshold)
-          );
+          const followUpEval = await this.activeEvaluator!.evaluate(followUpQuery.query, followUpResults, config.confidenceThreshold, followUpEvalContext);
 
           steps.push({
             stepNumber: currentIteration,
@@ -186,10 +205,7 @@ export class AgentOrchestrator {
       previousSteps: steps.map(s => `Step ${s.stepNumber}: ${s.query} (${s.resultsCount} results, confidence: ${s.confidence})`),
     } : undefined;
 
-    const finalEvaluation = await (config.useLLM
-      ? this.llmResultEvaluator.evaluate(query, finalResults, config.confidenceThreshold, finalEvalContext)
-      : this.heuristicResultEvaluator.evaluate(query, finalResults, config.confidenceThreshold)
-    );
+    const finalEvaluation = await this.activeEvaluator!.evaluate(query, finalResults, config.confidenceThreshold, finalEvalContext);
 
     return {
       finalResults: finalResults.slice(0, 10), // Top 10 overall
@@ -204,19 +220,30 @@ export class AgentOrchestrator {
    * Deduplicate results and re-rank based on relevance to original query
    */
   private deduplicateAndRerank(results: SearchResult[], originalQuery: string): SearchResult[] {
-    // Deduplicate by chunk ID
-    const seen = new Set<string>();
-    const uniqueResults: SearchResult[] = [];
+    // Deduplicate by chunk ID.
+    // NOTE: `originalQuery` is currently kept as a placeholder for future re-ranking
+    // (e.g., computing an embedding for the original query and re-scoring chunks).
+    // For now we use the provided per-search similarity scores, but when multiple
+    // searches return the same chunk with different similarity values we want to
+    // keep the best-scoring instance. The previous implementation kept the first
+    // encountered instance which could drop a higher-scoring duplicate that
+    // appeared later (from a different sub-query/iteration).
+
+    const bestByChunk = new Map<string, SearchResult>();
 
     for (const result of results) {
-      if (!seen.has(result.chunk.id)) {
-        seen.add(result.chunk.id);
-        uniqueResults.push(result);
+      const id = result.chunk.id;
+      const prev = bestByChunk.get(id);
+      if (!prev || (typeof result.similarity === 'number' && result.similarity > prev.similarity)) {
+        bestByChunk.set(id, result);
       }
     }
 
-    // Re-rank by similarity (already sorted from individual searches)
-    // Could add more sophisticated re-ranking here (e.g., using cross-encoder)
+    const uniqueResults = Array.from(bestByChunk.values());
+
+    // Re-rank by similarity (descending). In future we may re-rank using the
+    // `originalQuery` by computing a fresh similarity score (embedding or
+    // cross-encoder) which would likely improve final ordering.
     return uniqueResults.sort((a, b) => b.similarity - a.similarity);
   }
 

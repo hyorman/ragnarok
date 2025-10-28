@@ -6,15 +6,9 @@
 import * as vscode from 'vscode';
 import { SearchResult } from './types';
 import { CONFIG } from './constants';
+import { EvaluationResult, IResultEvaluator } from './resultEvaluatorBase';
 
-export interface EvaluationResult {
-  confidence: number;
-  isComplete: boolean;
-  gaps: string[];
-  reasoning: string;
-}
-
-export class LLMResultEvaluator {
+export class LLMResultEvaluator implements IResultEvaluator {
   private model: vscode.LanguageModelChat | null = null;
   private modelFamily: string | null = null;
 

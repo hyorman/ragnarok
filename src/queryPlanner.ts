@@ -4,47 +4,22 @@
  */
 
 import { SearchResult } from './types';
+import {
+  SubQuery,
+  QueryPlan,
+  FollowUpQuery,
+  IQueryPlanner,
+} from './queryPlannerBase';
 
-export interface SubQuery {
-  query: string;
-  reasoning: string;
-  topK?: number;
-  dependencies?: number[]; // Indices of other sub-queries this depends on
-}
-
-export interface QueryPlan {
-  originalQuery: string;
-  subQueries: SubQuery[];
-  strategy: 'sequential' | 'parallel';
-  complexity: 'simple' | 'moderate' | 'complex';
-}
-
-export interface FollowUpQuery {
-  query: string;
-  reasoning: string;
-}
-
-export class QueryPlanner {
+export class QueryPlanner extends IQueryPlanner {
   /**
    * Analyze query and create execution plan
    */
-  public async createPlan(query: string, enableDecomposition: boolean): Promise<QueryPlan> {
-    if (!enableDecomposition) {
-      // Simple single-query plan
-      return {
-        originalQuery: query,
-        subQueries: [
-          {
-            query,
-            reasoning: 'Direct query execution',
-            topK: 5,
-          },
-        ],
-        strategy: 'sequential',
-        complexity: 'simple',
-      };
-    }
-
+  public async createPlan(
+    query: string,
+    context?: Record<string, any>,
+    workspaceContext?: any
+  ): Promise<QueryPlan> {
     // Analyze query complexity
     const complexity = this.analyzeComplexity(query);
 
@@ -209,14 +184,6 @@ export class QueryPlanner {
     ];
   }
 
-  /**
-   * Determine if sub-queries can be executed in parallel or must be sequential
-   */
-  private determineStrategy(subQueries: SubQuery[]): 'sequential' | 'parallel' {
-    // If any sub-query has dependencies, use sequential
-    const hasDependencies = subQueries.some((sq) => sq.dependencies && sq.dependencies.length > 0);
-    return hasDependencies ? 'sequential' : 'parallel';
-  }
 
   /**
    * Extract entities being compared
