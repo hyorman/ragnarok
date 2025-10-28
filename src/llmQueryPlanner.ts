@@ -7,27 +7,14 @@ import * as vscode from 'vscode';
 import { SearchResult } from './types';
 import { WorkspaceContext, WorkspaceContextProvider } from './workspaceContext';
 import { CONFIG } from './constants';
+import {
+  SubQuery,
+  QueryPlan,
+  FollowUpQuery,
+  IQueryPlanner,
+} from './queryPlannerBase';
 
-export interface SubQuery {
-  query: string;
-  reasoning: string;
-  topK?: number;
-  dependencies?: number[];
-}
-
-export interface QueryPlan {
-  originalQuery: string;
-  subQueries: SubQuery[];
-  strategy: 'sequential' | 'parallel';
-  complexity: 'simple' | 'moderate' | 'complex';
-}
-
-export interface FollowUpQuery {
-  query: string;
-  reasoning: string;
-}
-
-export class LLMQueryPlanner {
+export class LLMQueryPlanner extends IQueryPlanner {
   private model: vscode.LanguageModelChat | null = null;
   private modelFamily: string | null = null;
 
@@ -72,7 +59,6 @@ export class LLMQueryPlanner {
    */
   public async createPlan(
     query: string,
-    enableDecomposition: boolean,
     context?: {
       topicName?: string;
       topicDescription?: string;
@@ -81,15 +67,6 @@ export class LLMQueryPlanner {
     },
     workspaceContext?: WorkspaceContext
   ): Promise<QueryPlan> {
-    if (!enableDecomposition) {
-      return {
-        originalQuery: query,
-        subQueries: [{ query, reasoning: 'Direct query execution', topK: 5 }],
-        strategy: 'sequential',
-        complexity: 'simple',
-      };
-    }
-
     const model = await this.getModel();
     if (!model) {
       // Fallback to heuristic approach if LLM not available
@@ -242,25 +219,6 @@ Respond ONLY with valid JSON, no other text.`;
   /**
    * Fallback heuristic plan when LLM unavailable
    */
-  private fallbackHeuristicPlan(query: string): QueryPlan {
-    const lowerQuery = query.toLowerCase();
-
-    // Simple heuristic complexity
-    let complexity: 'simple' | 'moderate' | 'complex' = 'simple';
-    if (/\b(compare|versus|difference)\b/.test(lowerQuery)) {
-      complexity = 'complex';
-    } else if (/\b(and|also|how|why)\b/.test(lowerQuery)) {
-      complexity = 'moderate';
-    }
-
-    return {
-      originalQuery: query,
-      subQueries: [{ query, reasoning: 'Heuristic-based single query', topK: 5 }],
-      strategy: 'sequential',
-      complexity,
-    };
-  }
-
   /**
    * Generate follow-up query using LLM
    */
@@ -351,22 +309,5 @@ Respond ONLY with valid JSON, no other text.`;
     }
   }
 
-  /**
-   * Fallback follow-up query generation
-   */
-  private fallbackFollowUpQuery(originalQuery: string, gaps: string[]): FollowUpQuery | null {
-    if (gaps.length === 0) {
-      return null;
-    }
-
-    const mainGap = gaps[0];
-    const queryWords = originalQuery.split(' ').filter((w) => w.length > 3);
-    const mainConcept = queryWords[0] || 'information';
-
-    return {
-      query: `${mainConcept} ${mainGap}`,
-      reasoning: `Addressing gap: ${mainGap}`,
-    };
-  }
 }
 

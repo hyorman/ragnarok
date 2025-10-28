@@ -4,22 +4,19 @@
  */
 
 import { SearchResult } from './types';
+import { EvaluationResult, IResultEvaluator } from './resultEvaluatorBase';
 
-export interface EvaluationResult {
-  confidence: number; // 0-1 score
-  isComplete: boolean; // Whether we have sufficient information
-  gaps: string[]; // Identified information gaps
-  reasoning: string;
-}
-
-export class ResultEvaluator {
+export class ResultEvaluator implements IResultEvaluator {
   /**
    * Evaluate search results quality and completeness
    */
   public async evaluate(
     query: string,
     results: SearchResult[],
-    confidenceThreshold: number
+    confidenceThreshold: number,
+    // Optional context is accepted for compatibility with LLM evaluator
+    // Heuristic evaluator ignores this parameter
+    _context?: { topicName?: string; previousSteps?: string[] }
   ): Promise<EvaluationResult> {
     if (results.length === 0) {
       return {
