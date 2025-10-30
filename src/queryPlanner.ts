@@ -20,9 +20,9 @@ export class QueryPlanner extends IQueryPlanner {
     context?: Record<string, any>,
     workspaceContext?: any
   ): Promise<QueryPlan> {
+
     // Analyze query complexity
     const complexity = this.analyzeComplexity(query);
-
     // Decompose based on complexity
     const subQueries = await this.decompose(query, complexity);
 
