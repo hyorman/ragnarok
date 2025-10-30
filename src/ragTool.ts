@@ -7,14 +7,18 @@ import { EmbeddingService } from './embeddingService';
 import { VectorDatabaseService } from './vectorDatabase';
 import { RAGQueryParams, RAGQueryResult } from './types';
 import { TOOLS, CONFIG } from './constants';
+import { AgentOrchestrator, AgenticRAGConfig } from './agentOrchestrator';
+import { WorkspaceContextProvider } from './workspaceContext';
 
 export class RAGTool {
   private embeddingService: EmbeddingService;
   private vectorDb: VectorDatabaseService;
+  private agentOrchestrator: AgentOrchestrator;
 
   constructor() {
     this.embeddingService = EmbeddingService.getInstance();
     this.vectorDb = VectorDatabaseService.getInstance();
+    this.agentOrchestrator = new AgentOrchestrator();
   }
 
   /**
@@ -47,7 +51,7 @@ export class RAGTool {
   }
 
   /**
-   * Execute a RAG query
+   * Execute a RAG query (supports both simple and agentic modes)
    */
   public async executeQuery(params: RAGQueryParams): Promise<RAGQueryResult> {
     try {
@@ -69,11 +73,59 @@ export class RAGTool {
         );
       }
 
-      // Generate embedding for the query
-      const queryEmbedding = await this.embeddingService.embed(params.query);
+      // Determine if we should use agentic mode
+      const useAgenticMode = params.useAgenticMode ?? config.get<boolean>(CONFIG.USE_AGENTIC_MODE, false);
 
-      // Search the vector database
-      const searchResults = await this.vectorDb.search(topicMatch.topic.id, queryEmbedding, topK);
+      let searchResults;
+      let agenticMetadata;
+
+      if (useAgenticMode) {
+        // Use Agentic RAG with multi-step retrieval
+        const agenticConfig = this.buildAgenticConfig(params, config);
+
+        // Build context for LLM (if enabled)
+        const context = agenticConfig.useLLM ? {
+          topicName: topicMatch.topic.name,
+          topicDescription: topicMatch.topic.description,
+          documentCount: topicMatch.topic.documentCount,
+          // Could add recent queries here if we track them
+        } : undefined;
+
+        // Get workspace context (if LLM enabled and includeWorkspaceContext is true)
+        const includeWorkspace = config.get<boolean>(CONFIG.AGENTIC_INCLUDE_WORKSPACE, true);
+        const workspaceContext = agenticConfig.useLLM && includeWorkspace
+          ? await WorkspaceContextProvider.getContext({
+              includeSelection: true,
+              includeActiveFile: true,
+              includeWorkspace: true,
+              maxCodeLength: 1000,
+            })
+          : undefined;
+
+        const agenticResult = await this.agentOrchestrator.executeAgenticQuery(
+          topicMatch.topic.id,
+          params.query,
+          agenticConfig,
+          context,
+          workspaceContext
+        );
+
+        searchResults = agenticResult.finalResults;
+        agenticMetadata = {
+          mode: 'agentic' as const,
+          steps: agenticResult.steps,
+          totalIterations: agenticResult.totalIterations,
+          queryComplexity: agenticResult.queryPlan.complexity,
+          confidence: agenticResult.confidence,
+        };
+      } else {
+        // Use simple single-shot retrieval
+        const queryEmbedding = await this.embeddingService.embed(params.query);
+        searchResults = await this.vectorDb.search(topicMatch.topic.id, queryEmbedding, topK);
+        agenticMetadata = {
+          mode: 'simple' as const,
+        };
+      }
 
       // Format results with heading context
       const results: RAGQueryResult = {
@@ -82,6 +134,7 @@ export class RAGTool {
         topicMatched: topicMatch.matchType,
         requestedTopic: topicMatch.matchType !== 'exact' ? params.topic : undefined,
         availableTopics: topicMatch.availableTopics,
+        agenticMetadata,
         results: searchResults.map((result) => ({
           text: result.chunk.text,
           documentName: result.documentName,
@@ -103,6 +156,22 @@ export class RAGTool {
       const errorMessage = error instanceof Error ? error.message : String(error);
       throw new Error(`RAG Query Failed: ${errorMessage}`);
     }
+  }
+
+  /**
+   * Build agentic configuration from parameters and settings
+   */
+  private buildAgenticConfig(params: RAGQueryParams, config: vscode.WorkspaceConfiguration): AgenticRAGConfig {
+    const userConfig = params.agenticConfig || {};
+
+    return {
+      maxIterations: userConfig.maxIterations ?? config.get<number>(CONFIG.AGENTIC_MAX_ITERATIONS, 3),
+      confidenceThreshold: userConfig.confidenceThreshold ?? config.get<number>(CONFIG.AGENTIC_CONFIDENCE_THRESHOLD, 0.7),
+      enableQueryDecomposition: userConfig.enableQueryDecomposition ?? config.get<boolean>(CONFIG.AGENTIC_QUERY_DECOMPOSITION, true),
+      enableIterativeRefinement: userConfig.enableIterativeRefinement ?? config.get<boolean>(CONFIG.AGENTIC_ITERATIVE_REFINEMENT, true),
+      retrievalStrategy: userConfig.retrievalStrategy ?? config.get<'vector' | 'hybrid'>(CONFIG.AGENTIC_RETRIEVAL_STRATEGY, 'hybrid'),
+      useLLM: userConfig.useLLM ?? config.get<boolean>(CONFIG.AGENTIC_USE_LLM, false),
+    };
   }
 
   /**
