@@ -11,6 +11,7 @@ import { ResultEvaluator } from './resultEvaluator';
 import { IResultEvaluator } from './resultEvaluatorBase';
 import { LLMQueryPlanner } from './llmQueryPlanner';
 import { LLMResultEvaluator } from './llmResultEvaluator';
+import { getChatModel } from './llmProvider';
 import { RetrievalStrategy, VectorSearchStrategy, HybridSearchStrategy } from './retrievalStrategy';
 import { SearchResult } from './types';
 import { WorkspaceContext } from './workspaceContext';
@@ -94,7 +95,7 @@ export class AgentOrchestrator {
       topicName?: string;
       topicDescription?: string;
       documentCount?: number;
-      recentQueries?: string[];
+      recentQueries?: string[]; // TODO how to populate this
     },
     workspaceContext?: WorkspaceContext
   ): Promise<AgenticSearchResult> {
@@ -102,21 +103,34 @@ export class AgentOrchestrator {
     let allResults: SearchResult[] = [];
     let currentIteration = 0;
 
-    // Select planner and evaluator based on config
-    this.activePlanner = config.useLLM ? this.llmQueryPlanner : this.heuristicQueryPlanner;
-    this.activeEvaluator = config.useLLM ? this.llmResultEvaluator : this.heuristicResultEvaluator;
+    // Select planner and evaluator based on config. If LLM use is requested
+    // but no chat model is available, fall back to the heuristic planner/evaluator
+    if (config.useLLM) {
+      const model = await getChatModel();
+      if (model) {
+        this.activePlanner = this.llmQueryPlanner;
+        this.activeEvaluator = this.llmResultEvaluator;
+      } else {
+        console.warn('Agentic LLM requested but no chat model available; using heuristic planner/evaluator');
+        this.activePlanner = this.heuristicQueryPlanner;
+        this.activeEvaluator = this.heuristicResultEvaluator;
+      }
+    } else {
+      this.activePlanner = this.heuristicQueryPlanner;
+      this.activeEvaluator = this.heuristicResultEvaluator;
+    }
 
     // Step 1: Query Planning (with context if using LLM)
     let queryPlan: QueryPlan;
     if (config.enableQueryDecomposition) {
-      queryPlan = await this.activePlanner.createPlan(query, context, workspaceContext);
+      try {
+        queryPlan = await this.activePlanner!.createPlan(query, context, workspaceContext);
+      } catch (planErr) {
+        console.warn('Planner failed, falling back to single-query plan:', planErr);
+        queryPlan = this.activePlanner!.fallbackSingleQueryPlan(query);
+      }
     } else {
-      queryPlan = {
-        originalQuery: query,
-        subQueries: [{ query, reasoning: 'Direct query execution', topK: 5 }],
-        strategy: 'sequential',
-        complexity: 'simple',
-      };
+        queryPlan = this.activePlanner!.fallbackSingleQueryPlan(query);
     }
 
     // Step 2: Execute retrieval for each sub-query
@@ -160,11 +174,18 @@ export class AgentOrchestrator {
       // Iterative refinement: check if we need more information
         if (config.enableIterativeRefinement && !evaluation.isComplete) {
         // Generate follow-up query based on gaps
-          const followUpQuery = await this.activePlanner.generateFollowUpQuery(
-            query,
-            allResults,
-            evaluation.gaps
-          );
+          let followUpQuery;
+          try {
+              followUpQuery = await this.activePlanner!.generateFollowUpQuery(
+              query,
+              allResults,
+              evaluation.gaps
+            );
+            } catch (followErr) {
+              console.warn('Planner follow-up generation failed; using fallback:', followErr);
+              // Use planner's public fallback helper
+              followUpQuery = this.activePlanner!.fallbackFollowUpQuery(query, evaluation.gaps);
+          }
 
         if (followUpQuery && currentIteration < config.maxIterations) {
           currentIteration++;

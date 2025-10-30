@@ -5,47 +5,10 @@
 
 import * as vscode from 'vscode';
 import { SearchResult } from './types';
-import { CONFIG } from './constants';
 import { EvaluationResult, IResultEvaluator } from './resultEvaluatorBase';
+import { getChatModel } from './llmProvider';
 
 export class LLMResultEvaluator implements IResultEvaluator {
-  private model: vscode.LanguageModelChat | null = null;
-  private modelFamily: string | null = null;
-
-  /**
-   * Initialize and get available language model
-   */
-  private async getModel(): Promise<vscode.LanguageModelChat | null> {
-    // Get configured model family
-    const config = vscode.workspace.getConfiguration();
-    const configuredModel = config.get<string>(CONFIG.AGENTIC_LLM_MODEL, 'gpt-4o');
-
-    // If model family changed, reset cached model
-    if (this.modelFamily && this.modelFamily !== configuredModel) {
-      this.model = null;
-    }
-    this.modelFamily = configuredModel;
-
-    if (this.model) {
-      return this.model;
-    }
-
-    try {
-      const models = await vscode.lm.selectChatModels({
-        vendor: 'copilot',
-        family: configuredModel,
-      });
-
-      if (models.length > 0) {
-        this.model = models[0];
-        return this.model;
-      }
-    } catch (error) {
-      console.error('Failed to get language model:', error);
-    }
-
-    return null;
-  }
 
   /**
    * Evaluate search results using LLM reasoning
@@ -68,7 +31,7 @@ export class LLMResultEvaluator implements IResultEvaluator {
       };
     }
 
-    const model = await this.getModel();
+    const model = await getChatModel();
     if (!model) {
       console.warn('LLM not available, using heuristic evaluation');
       return this.fallbackHeuristicEvaluation(query, results, confidenceThreshold);

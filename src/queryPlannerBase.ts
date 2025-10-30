@@ -49,7 +49,7 @@ export abstract class IQueryPlanner {
    * Default fallback follow-up query generator used when a planner can't
    * produce a follow-up via more advanced means (LLM, etc.).
    */
-  protected fallbackFollowUpQuery(originalQuery: string, gaps: string[]): FollowUpQuery | null {
+  public fallbackFollowUpQuery(originalQuery: string, gaps: string[]): FollowUpQuery | null {
     if (!gaps || gaps.length === 0) return null;
     const mainGap = gaps[0];
 
@@ -64,11 +64,12 @@ export abstract class IQueryPlanner {
   }
 
   /**
-   * Default heuristic plan generator when an LLM or richer planner isn't
-   * available. This mirrors the simple heuristic used by the LLM planner.
+   * Public helper that returns a conservative single-query plan used as a
+   * centralized fallback. Exposed publicly so orchestrator can call it when
+   * planner execution fails.
    */
-  protected fallbackHeuristicPlan(query: string): QueryPlan {
-    const lowerQuery = query.toLowerCase();
+  public fallbackSingleQueryPlan(originalQuery: string): QueryPlan {
+    const lowerQuery = originalQuery.toLowerCase();
 
     let complexity: 'simple' | 'moderate' | 'complex' = 'simple';
     if (/\b(compare|versus|difference)\b/.test(lowerQuery)) {
@@ -78,8 +79,8 @@ export abstract class IQueryPlanner {
     }
 
     return {
-      originalQuery: query,
-      subQueries: [{ query, reasoning: 'Heuristic-based single query', topK: 5 }],
+      originalQuery,
+      subQueries: [{ query: originalQuery, reasoning: 'Direct query execution', topK: 5 }],
       strategy: 'sequential',
       complexity,
     };

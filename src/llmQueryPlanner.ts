@@ -6,7 +6,7 @@
 import * as vscode from 'vscode';
 import { SearchResult } from './types';
 import { WorkspaceContext, WorkspaceContextProvider } from './workspaceContext';
-import { CONFIG } from './constants';
+import { getChatModel } from './llmProvider';
 import {
   SubQuery,
   QueryPlan,
@@ -15,44 +15,6 @@ import {
 } from './queryPlannerBase';
 
 export class LLMQueryPlanner extends IQueryPlanner {
-  private model: vscode.LanguageModelChat | null = null;
-  private modelFamily: string | null = null;
-
-  /**
-   * Initialize and get available language model
-   */
-  private async getModel(): Promise<vscode.LanguageModelChat | null> {
-    // Get configured model family
-    const config = vscode.workspace.getConfiguration();
-    const configuredModel = config.get<string>(CONFIG.AGENTIC_LLM_MODEL, 'gpt-4o');
-
-    // If model family changed, reset cached model
-    if (this.modelFamily && this.modelFamily !== configuredModel) {
-      this.model = null;
-    }
-    this.modelFamily = configuredModel;
-
-    if (this.model) {
-      return this.model;
-    }
-
-    try {
-      // Get available models with configured family
-      const models = await vscode.lm.selectChatModels({
-        vendor: 'copilot',
-        family: configuredModel,
-      });
-
-      if (models.length > 0) {
-        this.model = models[0];
-        return this.model;
-      }
-    } catch (error) {
-      console.error('Failed to get language model:', error);
-    }
-
-    return null;
-  }
 
   /**
    * Create query plan using LLM reasoning
@@ -67,11 +29,11 @@ export class LLMQueryPlanner extends IQueryPlanner {
     },
     workspaceContext?: WorkspaceContext
   ): Promise<QueryPlan> {
-    const model = await this.getModel();
+
+    const model = await getChatModel();
     if (!model) {
-      // Fallback to heuristic approach if LLM not available
-      console.warn('LLM not available, using heuristic query planning');
-      return this.fallbackHeuristicPlan(query);
+      // Let the orchestrator handle fallback centrally
+      throw new Error('No chat model available');
     }
 
     try {
@@ -79,7 +41,7 @@ export class LLMQueryPlanner extends IQueryPlanner {
       const messages = this.buildContextualMessages(context, workspaceContext);
       messages.push(vscode.LanguageModelChatMessage.User(prompt));
 
-      const response = await model.sendRequest(messages, {}, new vscode.CancellationTokenSource().token);
+      const response = await model!.sendRequest(messages, {}, new vscode.CancellationTokenSource().token);
 
       // Parse LLM response
       let fullResponse = '';
@@ -90,7 +52,8 @@ export class LLMQueryPlanner extends IQueryPlanner {
       return this.parseQueryPlan(query, fullResponse);
     } catch (error) {
       console.error('LLM query planning failed:', error);
-      return this.fallbackHeuristicPlan(query);
+      // Rethrow so orchestrator can decide the fallback
+      throw error instanceof Error ? error : new Error(String(error));
     }
   }
 
@@ -195,30 +158,22 @@ Respond ONLY with valid JSON, no other text.`;
    * Parse LLM response into query plan
    */
   private parseQueryPlan(originalQuery: string, llmResponse: string): QueryPlan {
-    try {
-      // Extract JSON from response (in case LLM adds markdown formatting)
-      const jsonMatch = llmResponse.match(/\{[\s\S]*\}/);
-      if (!jsonMatch) {
-        throw new Error('No JSON found in response');
-      }
-
-      const parsed = JSON.parse(jsonMatch[0]);
-
-      return {
-        originalQuery,
-        subQueries: parsed.subQueries || [{ query: originalQuery, reasoning: 'Default', topK: 5 }],
-        strategy: parsed.strategy || 'sequential',
-        complexity: parsed.complexity || 'moderate',
-      };
-    } catch (error) {
-      console.error('Failed to parse LLM response:', error);
-      return this.fallbackHeuristicPlan(originalQuery);
+    // Extract JSON from response (in case LLM adds markdown formatting)
+    const jsonMatch = llmResponse.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) {
+      throw new Error('No JSON found in LLM response');
     }
+
+    const parsed = JSON.parse(jsonMatch[0]);
+
+    return {
+      originalQuery,
+      subQueries: parsed.subQueries || [{ query: originalQuery, reasoning: 'Default', topK: 5 }],
+      strategy: parsed.strategy || 'sequential',
+      complexity: parsed.complexity || 'moderate',
+    };
   }
 
-  /**
-   * Fallback heuristic plan when LLM unavailable
-   */
   /**
    * Generate follow-up query using LLM
    */
@@ -231,16 +186,16 @@ Respond ONLY with valid JSON, no other text.`;
       return null;
     }
 
-    const model = await this.getModel();
+    const model = await getChatModel();
     if (!model) {
-      return this.fallbackFollowUpQuery(originalQuery, gaps);
+      throw new Error('No chat model available');
     }
 
     try {
       const prompt = this.buildFollowUpPrompt(originalQuery, existingResults, gaps);
       const messages = [vscode.LanguageModelChatMessage.User(prompt)];
 
-      const response = await model.sendRequest(messages, {}, new vscode.CancellationTokenSource().token);
+      const response = await model!.sendRequest(messages, {}, new vscode.CancellationTokenSource().token);
 
       let fullResponse = '';
       for await (const chunk of response.text) {
@@ -250,7 +205,7 @@ Respond ONLY with valid JSON, no other text.`;
       return this.parseFollowUpQuery(fullResponse);
     } catch (error) {
       console.error('LLM follow-up query generation failed:', error);
-      return this.fallbackFollowUpQuery(originalQuery, gaps);
+      throw error instanceof Error ? error : new Error(String(error));
     }
   }
 
