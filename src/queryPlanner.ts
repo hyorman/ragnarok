@@ -17,6 +17,7 @@ export class QueryPlanner extends IQueryPlanner {
    */
   public async createPlan(
     query: string,
+    baseTopK: number,
     context?: Record<string, any>,
     workspaceContext?: any
   ): Promise<QueryPlan> {
@@ -24,7 +25,7 @@ export class QueryPlanner extends IQueryPlanner {
     // Analyze query complexity
     const complexity = this.analyzeComplexity(query);
     // Decompose based on complexity
-    const subQueries = await this.decompose(query, complexity);
+    const subQueries = await this.decompose(query, complexity, baseTopK);
 
     return {
       originalQuery: query,
@@ -70,13 +71,13 @@ export class QueryPlanner extends IQueryPlanner {
   /**
    * Decompose query into sub-queries
    */
-  private async decompose(query: string, complexity: 'simple' | 'moderate' | 'complex'): Promise<SubQuery[]> {
+  private async decompose(query: string, complexity: 'simple' | 'moderate' | 'complex', baseTopK: number): Promise<SubQuery[]> {
     if (complexity === 'simple') {
       return [
         {
           query,
           reasoning: 'Simple query requiring single retrieval',
-          topK: 5,
+          topK: baseTopK,
         },
       ];
     }
@@ -88,21 +89,24 @@ export class QueryPlanner extends IQueryPlanner {
     if (/\b(compare|difference|versus|vs|contrast)\b/.test(lowerQuery)) {
       const entities = this.extractComparisonEntities(query);
       if (entities.length >= 2) {
+        // Scale topK: use baseTopK for main queries, 70% for comparison query
+        const comparisonTopK = Math.max(2, Math.floor(baseTopK * 0.7));
+
         subQueries.push({
           query: `Information about ${entities[0]}`,
           reasoning: `First entity in comparison: ${entities[0]}`,
-          topK: 5,
+          topK: baseTopK,
         });
         subQueries.push({
           query: `Information about ${entities[1]}`,
           reasoning: `Second entity in comparison: ${entities[1]}`,
-          topK: 5,
+          topK: baseTopK,
           dependencies: [0],
         });
         subQueries.push({
           query: `${entities[0]} versus ${entities[1]} differences similarities`,
           reasoning: 'Direct comparison information',
-          topK: 3,
+          topK: comparisonTopK,
           dependencies: [0, 1],
         });
         return subQueries;
@@ -117,7 +121,7 @@ export class QueryPlanner extends IQueryPlanner {
         subQueries.push({
           query: concepts[0],
           reasoning: 'Primary concept or event',
-          topK: 5,
+          topK: baseTopK,
         });
 
         // Look for related/consequent information
@@ -125,7 +129,7 @@ export class QueryPlanner extends IQueryPlanner {
           subQueries.push({
             query: `${concepts[0]} impact effect result`,
             reasoning: 'Consequences or effects',
-            topK: 5,
+            topK: baseTopK,
             dependencies: [0],
           });
         }
@@ -134,7 +138,7 @@ export class QueryPlanner extends IQueryPlanner {
           subQueries.push({
             query: `${concepts[0]} cause reason background`,
             reasoning: 'Causes or background',
-            topK: 5,
+            topK: baseTopK,
             dependencies: [0],
           });
         }
@@ -146,15 +150,17 @@ export class QueryPlanner extends IQueryPlanner {
     // Handle "how" or "why" questions (explanatory)
     if (/\b(how|why|explain)\b/.test(lowerQuery)) {
       const mainTopic = this.extractMainTopic(query);
+      const examplesTopK = Math.max(2, Math.floor(baseTopK * 0.6));
+
       subQueries.push({
         query: mainTopic,
         reasoning: 'Core concept definition and overview',
-        topK: 5,
+        topK: baseTopK,
       });
       subQueries.push({
         query: `${mainTopic} examples use cases`,
         reasoning: 'Practical examples and applications',
-        topK: 3,
+        topK: examplesTopK,
         dependencies: [0],
       });
       return subQueries;
@@ -168,7 +174,7 @@ export class QueryPlanner extends IQueryPlanner {
         subQueries.push({
           query: part.trim(),
           reasoning: `Sub-question ${idx + 1}`,
-          topK: 5,
+          topK: baseTopK,
         });
       });
       return subQueries;
@@ -179,7 +185,7 @@ export class QueryPlanner extends IQueryPlanner {
       {
         query,
         reasoning: 'Direct query execution',
-        topK: 5,
+        topK: baseTopK,
       },
     ];
   }

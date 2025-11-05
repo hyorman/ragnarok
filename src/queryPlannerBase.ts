@@ -29,9 +29,13 @@ export abstract class IQueryPlanner {
    *
    * The optional `context` parameter can be used by implementations (for
    * example the LLM-based planner) to pass extra topic/workspace metadata.
+   * The optional `baseTopK` parameter allows planners to scale sub-query topK
+   * values based on user preference (e.g., if user wants 10 results, sub-queries
+   * should use higher topK than the default 5).
    */
   public abstract createPlan(
     query: string,
+    baseTopK: number,
     context?: Record<string, any>,
     workspaceContext?: any
   ): Promise<QueryPlan>;
@@ -44,6 +48,22 @@ export abstract class IQueryPlanner {
     existingResults: SearchResult[],
     gaps: string[]
   ): Promise<FollowUpQuery | null>;
+
+  /**
+   * Fallback plan for when planning fails - returns single query
+   */
+  public fallbackSingleQueryPlan(query: string, baseTopK: number): QueryPlan {
+    return {
+      originalQuery: query,
+      subQueries: [{
+        query,
+        reasoning: 'Fallback single query',
+        topK: baseTopK,
+      }],
+      strategy: 'parallel',
+      complexity: 'simple',
+    };
+  }
 
   /**
    * Default fallback follow-up query generator used when a planner can't
@@ -60,29 +80,6 @@ export abstract class IQueryPlanner {
     return {
       query: `${mainConcept} ${mainGap}`,
       reasoning: `Addressing gap: ${mainGap}`,
-    };
-  }
-
-  /**
-   * Public helper that returns a conservative single-query plan used as a
-   * centralized fallback. Exposed publicly so orchestrator can call it when
-   * planner execution fails.
-   */
-  public fallbackSingleQueryPlan(originalQuery: string): QueryPlan {
-    const lowerQuery = originalQuery.toLowerCase();
-
-    let complexity: 'simple' | 'moderate' | 'complex' = 'simple';
-    if (/\b(compare|versus|difference)\b/.test(lowerQuery)) {
-      complexity = 'complex';
-    } else if (/\b(and|also|how|why)\b/.test(lowerQuery)) {
-      complexity = 'moderate';
-    }
-
-    return {
-      originalQuery,
-      subQueries: [{ query: originalQuery, reasoning: 'Direct query execution', topK: 5 }],
-      strategy: 'sequential',
-      complexity,
     };
   }
 

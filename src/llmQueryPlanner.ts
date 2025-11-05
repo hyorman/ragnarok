@@ -21,6 +21,7 @@ export class LLMQueryPlanner extends IQueryPlanner {
    */
   public async createPlan(
     query: string,
+    baseTopK: number,
     context?: {
       topicName?: string;
       topicDescription?: string;
@@ -37,7 +38,7 @@ export class LLMQueryPlanner extends IQueryPlanner {
     }
 
     try {
-      const prompt = this.buildQueryPlanningPrompt(query, context);
+      const prompt = this.buildQueryPlanningPrompt(query, context, baseTopK);
       const messages = this.buildContextualMessages(context, workspaceContext);
       messages.push(vscode.LanguageModelChatMessage.User(prompt));
 
@@ -49,7 +50,7 @@ export class LLMQueryPlanner extends IQueryPlanner {
         fullResponse += chunk;
       }
 
-      return this.parseQueryPlan(query, fullResponse);
+      return this.parseQueryPlan(query, fullResponse, baseTopK);
     } catch (error) {
       console.error('LLM query planning failed:', error);
       // Rethrow so orchestrator can decide the fallback
@@ -119,17 +120,23 @@ export class LLMQueryPlanner extends IQueryPlanner {
       topicDescription?: string;
       documentCount?: number;
       recentQueries?: string[];
-    }
+    },
+    baseTopK: number = 5
   ): string {
     let prompt = `Analyze the user's query and create a retrieval plan.
 
 User Query: "${query}"
 
+User wants approximately ${baseTopK} results total. Scale sub-query topK values accordingly:
+- For primary/main sub-queries: use topK around ${baseTopK}
+- For supplementary queries (examples, details): use topK around ${Math.max(2, Math.floor(baseTopK * 0.6))}
+
 Analyze this query and provide:
 1. Complexity level (simple/moderate/complex)
 2. Sub-queries needed to fully answer this question
 3. Reasoning for each sub-query
-4. Whether sub-queries can be executed in parallel or must be sequential
+4. Appropriate topK for each sub-query (scale based on user preference)
+5. Whether sub-queries can be executed in parallel or must be sequential
 
 Guidelines:
 - Simple queries: Single concept, can be answered with one search
@@ -143,7 +150,7 @@ Respond in this JSON format:
     {
       "query": "specific search query",
       "reasoning": "why this query is needed",
-      "topK": 5
+      "topK": ${baseTopK}
     }
   ],
   "strategy": "parallel|sequential"
@@ -157,7 +164,7 @@ Respond ONLY with valid JSON, no other text.`;
   /**
    * Parse LLM response into query plan
    */
-  private parseQueryPlan(originalQuery: string, llmResponse: string): QueryPlan {
+  private parseQueryPlan(originalQuery: string, llmResponse: string, baseTopK: number): QueryPlan {
     // Extract JSON from response (in case LLM adds markdown formatting)
     const jsonMatch = llmResponse.match(/\{[\s\S]*\}/);
     if (!jsonMatch) {
@@ -166,11 +173,65 @@ Respond ONLY with valid JSON, no other text.`;
 
     const parsed = JSON.parse(jsonMatch[0]);
 
+    // Coerce and validate subQueries into the SubQuery[] shape
+    const rawSubQueries = Array.isArray(parsed.subQueries) ? parsed.subQueries : [];
+
+    const subQueries: SubQuery[] = rawSubQueries.map((sq: any, idx: number) => {
+      // Ensure there's at least a query string; fallback to originalQuery
+      const query = typeof sq.query === 'string' && sq.query.trim().length > 0
+        ? sq.query.trim()
+        : (idx === 0 ? originalQuery : `subquery-${idx}`);
+
+      const reasoning = typeof sq.reasoning === 'string' && sq.reasoning.trim().length > 0
+        ? sq.reasoning.trim()
+        : 'No reasoning provided';
+
+      let topK: number | undefined;
+      if (typeof sq.topK === 'number' && Number.isFinite(sq.topK) && sq.topK > 0) {
+        topK = Math.max(1, Math.floor(sq.topK));
+      } else if (typeof sq.topK === 'string' && sq.topK.match(/\d+/)) {
+        topK = Math.max(1, parseInt(sq.topK, 10));
+      } else {
+        topK = baseTopK;
+      }
+
+      let dependencies: number[] | undefined;
+      if (Array.isArray(sq.dependencies)) {
+        const computed = sq.dependencies
+          .map((d: any) => Number(d))
+          .filter((n: number) => Number.isInteger(n) && n >= 0 && n < rawSubQueries.length);
+        dependencies = computed.length > 0 ? computed : undefined;
+      }
+
+      return {
+        query,
+        reasoning,
+        topK,
+        dependencies,
+      };
+    });
+
+    // If the planner didn't return any sub-queries, provide a single conservative fallback
+    const finalSubQueries = subQueries.length > 0
+      ? subQueries
+      : [{ query: originalQuery, reasoning: 'Default', topK: baseTopK }];
+
+    // Determine strategy: prefer planner-provided value if valid, otherwise infer from dependencies
+    const providedStrategy = parsed.strategy === 'parallel' || parsed.strategy === 'sequential'
+      ? parsed.strategy
+      : undefined;
+
+    const strategy = providedStrategy ?? this.determineStrategy(finalSubQueries);
+
+    const complexity = parsed.complexity === 'simple' || parsed.complexity === 'moderate' || parsed.complexity === 'complex'
+      ? parsed.complexity
+      : 'moderate';
+
     return {
       originalQuery,
-      subQueries: parsed.subQueries || [{ query: originalQuery, reasoning: 'Default', topK: 5 }],
-      strategy: parsed.strategy || 'sequential',
-      complexity: parsed.complexity || 'moderate',
+      subQueries: finalSubQueries,
+      strategy,
+      complexity,
     };
   }
 

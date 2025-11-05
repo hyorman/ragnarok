@@ -69,7 +69,6 @@ export interface RAGQueryParams {
   agenticConfig?: {
     maxIterations?: number;
     confidenceThreshold?: number;
-    enableQueryDecomposition?: boolean;
     enableIterativeRefinement?: boolean;
     retrievalStrategy?: 'vector' | 'hybrid';
     useLLM?: boolean;  // Use LLM for query planning and result evaluation

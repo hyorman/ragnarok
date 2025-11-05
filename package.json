@@ -94,17 +94,11 @@
           "maximum": 1,
           "order": 12
         },
-        "ragnarok.agenticQueryDecomposition": {
-          "type": "boolean",
-          "default": true,
-          "markdownDescription": "Decompose complex queries into sub-queries. Recommended for comparisons and multi-part questions.\n\n⚠️ _Only applies when Agentic Mode is enabled_",
-          "order": 13
-        },
         "ragnarok.agenticIterativeRefinement": {
           "type": "boolean",
           "default": true,
           "markdownDescription": "Generate follow-up queries to fill information gaps detected during retrieval.\n\n⚠️ _Only applies when Agentic Mode is enabled_",
-          "order": 14
+          "order": 13
         },
         "ragnarok.agenticRetrievalStrategy": {
           "type": "string",
@@ -118,13 +112,13 @@
             "Pure semantic search using embeddings only",
             "Hybrid: Combines semantic + keyword matching (recommended)"
           ],
-          "order": 15
+          "order": 14
         },
         "ragnarok.agenticUseLLM": {
           "type": "boolean",
           "default": false,
           "markdownDescription": "**Use LLM (Copilot) for intelligent planning:** Uses Copilot for query decomposition and result evaluation instead of rule-based heuristics.\n\n**Requirements:**\n- ✅ GitHub Copilot subscription\n- ✅ GitHub Copilot extension\n\n**Trade-offs:**\n- ✅ Much more intelligent\n- ✅ Context-aware planning\n- ⚠️ 2-3x slower\n- ⚠️ Uses Copilot API quota\n\n⚠️ _Only applies when Agentic Mode is enabled_",
-          "order": 16
+          "order": 15
         },
         "ragnarok.agenticLLMModel": {
           "type": "string",
@@ -140,13 +134,13 @@
             "GPT-4o-mini: Balanced performance and cost (recommended for most uses)",
             "GPT-3.5 Turbo: Fastest and most economical (lower quality reasoning)"
           ],
-          "order": 17
+          "order": 16
         },
         "ragnarok.agenticIncludeWorkspaceContext": {
           "type": "boolean",
           "default": true,
           "markdownDescription": "**Include workspace context:** Pass selected code, active file, imports, and symbols to Copilot (like #codebase).\n\n**Includes:**\n- Selected code (max 1000 chars)\n- File imports and symbols\n- Workspace name\n\n**Privacy:** Only relative paths, no sensitive data\n\n⚠️ _Only applies when LLM Mode is enabled_",
-          "order": 18
+          "order": 17
         }
       }
     },
@@ -269,8 +263,7 @@
             },
             "topK": {
               "type": "number",
-              "description": "Number of top results to return (optional, defaults to configured value)",
-              "default": 5
+              "description": "Number of top results to return (optional, uses configured value if not provided)"
             },
             "useAgenticMode": {
               "type": "boolean",
@@ -287,10 +280,6 @@
                 "confidenceThreshold": {
                   "type": "number",
                   "description": "Minimum confidence to stop retrieval (0-1)"
-                },
-                "enableQueryDecomposition": {
-                  "type": "boolean",
-                  "description": "Decompose complex queries into sub-queries"
                 },
                 "enableIterativeRefinement": {
                   "type": "boolean",

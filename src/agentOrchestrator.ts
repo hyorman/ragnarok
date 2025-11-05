@@ -19,7 +19,6 @@ import { WorkspaceContext } from './workspaceContext';
 export interface AgenticRAGConfig {
   maxIterations: number;
   confidenceThreshold: number;
-  enableQueryDecomposition: boolean;
   enableIterativeRefinement: boolean;
   retrievalStrategy: 'vector' | 'hybrid';
   useLLM: boolean;  // Use LLM for planning and evaluation
@@ -91,6 +90,7 @@ export class AgentOrchestrator {
     topicId: string,
     query: string,
     config: AgenticRAGConfig,
+    baseTopK: number,
     context?: {
       topicName?: string;
       topicDescription?: string;
@@ -103,35 +103,21 @@ export class AgentOrchestrator {
     let allResults: SearchResult[] = [];
     let currentIteration = 0;
 
-    // Select planner and evaluator based on config. If LLM use is requested
-    // but no chat model is available, fall back to the heuristic planner/evaluator
+    // Select planner and evaluator based on config.
+    // If LLM use is requested and a chat model is available, use the LLM planner/evaluator.
+    // Otherwise, use the heuristic planner/evaluator.
+    this.activePlanner = this.heuristicQueryPlanner;
+    this.activeEvaluator = this.heuristicResultEvaluator;
     if (config.useLLM) {
       const model = await getChatModel();
       if (model) {
         this.activePlanner = this.llmQueryPlanner;
         this.activeEvaluator = this.llmResultEvaluator;
-      } else {
-        console.warn('Agentic LLM requested but no chat model available; using heuristic planner/evaluator');
-        this.activePlanner = this.heuristicQueryPlanner;
-        this.activeEvaluator = this.heuristicResultEvaluator;
       }
-    } else {
-      this.activePlanner = this.heuristicQueryPlanner;
-      this.activeEvaluator = this.heuristicResultEvaluator;
     }
 
     // Step 1: Query Planning (with context if using LLM)
-    let queryPlan: QueryPlan;
-    if (config.enableQueryDecomposition) {
-      try {
-        queryPlan = await this.activePlanner!.createPlan(query, context, workspaceContext);
-      } catch (planErr) {
-        console.warn('Planner failed, falling back to single-query plan:', planErr);
-        queryPlan = this.activePlanner!.fallbackSingleQueryPlan(query);
-      }
-    } else {
-        queryPlan = this.activePlanner!.fallbackSingleQueryPlan(query);
-    }
+    const queryPlan = await this.activePlanner!.createPlan(query, baseTopK, context, workspaceContext);
 
     // Step 2: Execute retrieval for each sub-query
     for (const subQuery of queryPlan.subQueries) {

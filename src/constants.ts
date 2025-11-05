@@ -27,7 +27,6 @@ export const CONFIG = {
   USE_AGENTIC_MODE: 'useAgenticMode', //
   AGENTIC_MAX_ITERATIONS: 'agenticMaxIterations',
   AGENTIC_CONFIDENCE_THRESHOLD: 'agenticConfidenceThreshold',
-  AGENTIC_QUERY_DECOMPOSITION: 'agenticQueryDecomposition',
   AGENTIC_ITERATIVE_REFINEMENT: 'agenticIterativeRefinement',
   AGENTIC_RETRIEVAL_STRATEGY: 'agenticRetrievalStrategy',
   AGENTIC_USE_LLM: 'agenticUseLLM', // plan query, evaluate results, evaluate result with context
