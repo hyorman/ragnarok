@@ -1,27 +1,63 @@
 /**
  * Embedding service using Transformers.js for local sentence transformers
+ * Refactored with async-mutex to prevent race conditions
+ *
+ * Note: @huggingface/transformers is dynamically imported because it's an ESM-only package
+ * and VS Code extensions run in CommonJS mode. Dynamic import() allows us to load ESM packages
+ * at runtime without TypeScript compilation errors.
  */
 
 import * as vscode from 'vscode';
-import { pipeline, FeatureExtractionPipeline, env } from '@huggingface/transformers';
+import { Mutex } from 'async-mutex';
 import { CONFIG } from './constants';
+import { Logger } from './utils/logger';
+
+// Type definitions for the dynamically imported transformers module
+type TransformersModule = any; // Dynamic import type - resolved at runtime
+type FeatureExtractionPipeline = any;
 
 export class EmbeddingService {
   private static instance: EmbeddingService;
   private pipeline: FeatureExtractionPipeline | null = null;
   private currentModel: string | null = null;
-  private isInitializing: boolean = false;
-  private initializationPromise: Promise<void> | null = null;
+  private initMutex: Mutex = new Mutex();
+  private initPromise: Promise<void> | null = null;
+  private logger: Logger;
+  private transformers: TransformersModule | null = null;
 
   private constructor() {
-    // Configure transformers.js environment at module load time
+    this.logger = new Logger('EmbeddingService');
+  }
+
+  /**
+   * Dynamically import and configure the transformers module
+   * This is done lazily to avoid CommonJS/ESM compatibility issues
+   */
+  private async loadTransformers(): Promise<TransformersModule> {
+    if (this.transformers) {
+      return this.transformers;
+    }
+
+    this.transformers = await import('@huggingface/transformers');
+    const { env } = this.transformers;
+
+    // Configure transformers.js environment for cross-platform compatibility
     env.allowLocalModels = true;
     env.allowRemoteModels = true; // Allow downloading models from HuggingFace
     env.useBrowserCache = false;
-    // Disable ONNX WASM backend to avoid loading unnecessary dependencies
-    if ("backend" in env) {
-      (env as any).backends.onnx.wasm = false;
-    }
+
+    // Use WebAssembly backend for ONNX (cross-platform ML inference)
+    env.backends = {
+      onnx: {
+        wasm: {
+          proxy: false,
+          numThreads: 1, // Single thread for stability
+        }
+      }
+    };
+
+    this.logger.info('EmbeddingService configured: WASM backend (ONNX), Sharp enabled (image processing)');
+    return this.transformers;
   }
 
   public static getInstance(): EmbeddingService {
@@ -32,70 +68,116 @@ export class EmbeddingService {
   }
 
   /**
-   * Initialize the embedding model
+   * Initialize the embedding model with mutex to prevent race conditions
    */
   public async initialize(modelName?: string): Promise<void> {
     const config = vscode.workspace.getConfiguration(CONFIG.ROOT);
-    const targetModel = modelName || config.get<string>('embeddingModel', 'Xenova/all-MiniLM-L6-v2');
+    const targetModel = modelName || config.get<string>(CONFIG.EMBEDDING_MODEL, 'Xenova/all-MiniLM-L6-v2');
 
-    // If already initialized with the same model, return
+    // Already initialized with the same model
     if (this.pipeline && this.currentModel === targetModel) {
+      this.logger.debug(`Model ${targetModel} already initialized`);
       return;
     }
 
-    // If initialization is in progress, wait for it
-    if (this.isInitializing && this.initializationPromise) {
-      return this.initializationPromise;
-    }
+    // Use mutex to prevent concurrent initializations
+    return this.initMutex.runExclusive(async () => {
+      // Double-check after acquiring lock
+      if (this.pipeline && this.currentModel === targetModel) {
+        this.logger.debug(`Model ${targetModel} initialized while waiting for lock`);
+        return;
+      }
 
-    this.isInitializing = true;
-    this.initializationPromise = this._initializePipeline(targetModel);
+      // Wait for existing initialization if in progress
+      if (this.initPromise) {
+        this.logger.debug('Waiting for existing initialization to complete');
+        await this.initPromise;
+        if (this.currentModel === targetModel) {
+          return;
+        }
+      }
 
-    try {
-      await this.initializationPromise;
-    } finally {
-      this.isInitializing = false;
-      this.initializationPromise = null;
-    }
+      // Start new initialization
+      this.logger.info(`Initializing embedding model: ${targetModel}`);
+      this.initPromise = this._initializePipeline(targetModel);
+
+      try {
+        await this.initPromise;
+        this.logger.info(`Successfully initialized model: ${targetModel}`);
+      } catch (error) {
+        this.logger.error(`Failed to initialize model: ${targetModel}`, error);
+        throw error;
+      } finally {
+        this.initPromise = null;
+      }
+    });
   }
 
   private async _initializePipeline(modelName: string): Promise<void> {
-    try {
-      await vscode.window.withProgress(
-        {
-          location: vscode.ProgressLocation.Notification,
-          title: `Loading embedding model: ${modelName}`,
-          cancellable: false,
-        },
-        async (progress) => {
-          progress.report({ message: 'Downloading and initializing...' });
+    const maxRetries = 3;
+    let lastError: Error | null = null;
 
-          // Create the feature extraction pipeline
-          this.pipeline = await pipeline('feature-extraction', modelName, {
-            progress_callback: (progressData: any) => {
-              if (progressData.status === 'progress' && progressData.progress) {
-                const percent = Math.round(progressData.progress);
-                progress.report({
-                  message: `${progressData.file || 'Model'}: ${percent}%`,
-                  increment: 1
-                });
+    // Load transformers module
+    const transformers = await this.loadTransformers();
+    const { pipeline } = transformers;
+
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        await vscode.window.withProgress(
+          {
+            location: vscode.ProgressLocation.Notification,
+            title: `Loading embedding model: ${modelName}${attempt > 1 ? ` (Attempt ${attempt}/${maxRetries})` : ''}`,
+            cancellable: false,
+          },
+          async (progress) => {
+            progress.report({ message: 'Downloading and initializing...' });
+
+            // Create the feature extraction pipeline
+            this.pipeline = await pipeline('feature-extraction', modelName, {
+              progress_callback: (progressData: any) => {
+                if (progressData.status === 'progress' && progressData.progress) {
+                  const percent = Math.round(progressData.progress);
+                  progress.report({
+                    message: `${progressData.file || 'Model'}: ${percent}%`,
+                    increment: 1
+                  });
+                }
               }
-            }
-          });
+            });
 
-          this.currentModel = modelName;
-          progress.report({ message: 'Model loaded successfully!' });
+            // Validate the pipeline by testing with dummy text
+            await this.pipeline('test', { pooling: 'mean', normalize: true });
+
+            this.currentModel = modelName;
+            progress.report({ message: 'Model loaded successfully!' });
+          }
+        );
+
+        // Success - exit retry loop
+        return;
+
+      } catch (error: any) {
+        lastError = error;
+        this.logger.warn(`Initialization attempt ${attempt} failed:`, error.message);
+
+        // Clean up failed state
+        this.pipeline = null;
+        this.currentModel = null;
+
+        // Don't retry on last attempt
+        if (attempt < maxRetries) {
+          // Wait before retry with exponential backoff
+          const backoffMs = 1000 * Math.pow(2, attempt - 1);
+          this.logger.debug(`Waiting ${backoffMs}ms before retry...`);
+          await new Promise(resolve => setTimeout(resolve, backoffMs));
         }
-      );
-    } catch (error: any) {
-      this.pipeline = null;
-      this.currentModel = null;
-      // Log full error details for debugging
-      console.error('Full error details:', error);
-      console.error('Error stack:', error.stack);
-      const errorMsg = error.message || String(error);
-      throw new Error(`Failed to initialize embedding model "${modelName}": ${errorMsg}`);
+      }
     }
+
+    // All retries failed
+    this.logger.error('All initialization attempts failed', lastError);
+    const errorMsg = lastError?.message || String(lastError);
+    throw new Error(`Failed to initialize embedding model "${modelName}" after ${maxRetries} attempts: ${errorMsg}`);
   }
 
   /**
@@ -118,17 +200,22 @@ export class EmbeddingService {
       });
 
       // Convert to regular array
-      const embedding = Array.from(output.data) as number[];
+      const embedding = Array.from((output as any).data) as number[];
+      this.logger.debug(`Generated embedding with dimension: ${embedding.length}`);
       return embedding;
     } catch (error) {
+      this.logger.error('Failed to generate embedding', error);
       throw new Error(`Failed to generate embedding: ${error}`);
     }
   }
 
   /**
-   * Generate embeddings for multiple texts in batch
+   * Generate embeddings for multiple texts in batch with progress reporting
    */
-  public async embedBatch(texts: string[]): Promise<number[][]> {
+  public async embedBatch(
+    texts: string[],
+    progressCallback?: (progress: number) => void
+  ): Promise<number[][]> {
     if (!this.pipeline) {
       await this.initialize();
     }
@@ -136,6 +223,8 @@ export class EmbeddingService {
     if (!this.pipeline) {
       throw new Error('Embedding pipeline not initialized');
     }
+
+    this.logger.debug(`Generating embeddings for ${texts.length} texts`);
 
     try {
       const embeddings: number[][] = [];
@@ -150,12 +239,24 @@ export class EmbeddingService {
             pooling: 'mean',
             normalize: true,
           });
-          embeddings.push(Array.from(output.data) as number[]);
+          embeddings.push(Array.from((output as any).data) as number[]);
+
+          // Report progress
+          if (progressCallback) {
+            progressCallback(embeddings.length / texts.length);
+          }
+        }
+
+        // Allow garbage collection between batches
+        if (i + batchSize < texts.length) {
+          await new Promise(resolve => setImmediate(resolve));
         }
       }
 
+      this.logger.debug(`Successfully generated ${embeddings.length} embeddings`);
       return embeddings;
     } catch (error) {
+      this.logger.error('Failed to generate batch embeddings', error);
       throw new Error(`Failed to generate batch embeddings: ${error}`);
     }
   }
@@ -193,8 +294,13 @@ export class EmbeddingService {
    * Clear the model cache and reset
    */
   public async clearCache(): Promise<void> {
+    const previousModel = this.currentModel;
+    this.logger.info('Clearing embedding model cache', { previousModel });
+
     this.pipeline = null;
     this.currentModel = null;
+
+    this.logger.info('Embedding model cache cleared successfully');
     vscode.window.showInformationMessage('Embedding model cache cleared. Model will reload on next use.');
   }
 }

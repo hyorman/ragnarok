@@ -1,22 +1,24 @@
 /**
  * Command handlers for the RAG extension
+ * Refactored to use new LangChain-based architecture with TopicManager
  */
 
 import * as vscode from 'vscode';
-import { VectorDatabaseService } from './vectorDatabase';
+import { TopicManager } from './managers/topicManager';
 import { EmbeddingService } from './embeddingService';
-import { DocumentProcessor } from './documentProcessor';
-import { TextChunk } from './types';
 import { TopicTreeDataProvider } from './topicTreeView';
-import { COMMANDS, CONFIG } from './constants';
+import { COMMANDS } from './constants';
+import { Logger } from './utils/logger';
+
+const logger = new Logger('CommandHandler');
 
 export class CommandHandler {
-  private vectorDb: VectorDatabaseService;
+  private topicManager: TopicManager;
   private embeddingService: EmbeddingService;
   private treeDataProvider: TopicTreeDataProvider;
 
-  constructor(treeDataProvider: TopicTreeDataProvider) {
-    this.vectorDb = VectorDatabaseService.getInstance();
+  private constructor(topicManager: TopicManager, treeDataProvider: TopicTreeDataProvider) {
+    this.topicManager = topicManager;
     this.embeddingService = EmbeddingService.getInstance();
     this.treeDataProvider = treeDataProvider;
   }
@@ -24,11 +26,12 @@ export class CommandHandler {
   /**
    * Register all commands
    */
-  public static registerCommands(
+  public static async registerCommands(
     context: vscode.ExtensionContext,
     treeDataProvider: TopicTreeDataProvider
-  ): void {
-    const handler = new CommandHandler(treeDataProvider);
+  ): Promise<void> {
+    const topicManager = await TopicManager.getInstance();
+    const handler = new CommandHandler(topicManager, treeDataProvider);
 
     context.subscriptions.push(
       vscode.commands.registerCommand(COMMANDS.CREATE_TOPIC, () =>
@@ -80,10 +83,17 @@ export class CommandHandler {
         placeHolder: 'Brief description of this topic',
       });
 
-      const topic = await this.vectorDb.createTopic(name.trim(), description?.trim());
+      logger.info(`Creating topic: ${name}`);
+      const topic = await this.topicManager.createTopic({
+        name: name.trim(),
+        description: description?.trim(),
+      });
+
       vscode.window.showInformationMessage(`Topic "${topic.name}" created successfully!`);
       this.treeDataProvider.refresh();
+      logger.info(`Topic created: ${topic.id}`);
     } catch (error) {
+      logger.error(`Failed to create topic: ${error}`);
       vscode.window.showErrorMessage(`Failed to create topic: ${error}`);
     }
   }
@@ -100,7 +110,7 @@ export class CommandHandler {
         topicToDelete = item.topic;
       } else {
         // Called from command palette - show picker
-        const topics = await this.vectorDb.getTopics();
+        const topics = await this.topicManager.getAllTopics();
 
         if (topics.length === 0) {
           vscode.window.showInformationMessage('No topics available to delete.');
@@ -108,7 +118,7 @@ export class CommandHandler {
         }
 
         const selected = await vscode.window.showQuickPick(
-          topics.map((t) => ({
+          topics.map((t: any) => ({
             label: t.name,
             description: `${t.documentCount} document(s)`,
             detail: t.description,
@@ -133,11 +143,14 @@ export class CommandHandler {
       );
 
       if (confirmation === 'Delete') {
-        await this.vectorDb.deleteTopic(topicToDelete.id);
+        logger.info(`Deleting topic: ${topicToDelete.name} (${topicToDelete.id})`);
+        await this.topicManager.deleteTopic(topicToDelete.id);
         vscode.window.showInformationMessage(`Topic "${topicToDelete.name}" deleted.`);
         this.treeDataProvider.refresh();
+        logger.info(`Topic deleted successfully`);
       }
     } catch (error) {
+      logger.error(`Failed to delete topic: ${error}`);
       vscode.window.showErrorMessage(`Failed to delete topic: ${error}`);
     }
   }
@@ -147,7 +160,7 @@ export class CommandHandler {
    */
   private async listTopics(): Promise<void> {
     try {
-      const topics = await this.vectorDb.getTopics();
+      const topics = await this.topicManager.getAllTopics();
 
       if (topics.length === 0) {
         vscode.window.showInformationMessage(
@@ -156,7 +169,7 @@ export class CommandHandler {
         return;
       }
 
-      const items = topics.map((t) => ({
+      const items = topics.map((t: any) => ({
         label: t.name,
         description: `${t.documentCount} document(s)`,
         detail: t.description || 'No description',
@@ -166,6 +179,7 @@ export class CommandHandler {
         placeHolder: 'Available RAG Topics',
       });
     } catch (error) {
+      logger.error(`Failed to list topics: ${error}`);
       vscode.window.showErrorMessage(`Failed to list topics: ${error}`);
     }
   }
@@ -175,14 +189,14 @@ export class CommandHandler {
    */
   private async addDocument(item?: any): Promise<void> {
     try {
-      let selectedTopic;
+      let selectedTopic: any;
 
       // If called from tree view with item
       if (item && item.topic) {
-        selectedTopic = { topic: item.topic };
+        selectedTopic = item.topic;
       } else {
         // Called from command palette - show picker
-        const topics = await this.vectorDb.getTopics();
+        const topics = await this.topicManager.getAllTopics();
 
         if (topics.length === 0) {
           const create = await vscode.window.showInformationMessage(
@@ -197,8 +211,8 @@ export class CommandHandler {
           return;
         }
 
-        selectedTopic = await vscode.window.showQuickPick(
-          topics.map((t) => ({
+        const selected = await vscode.window.showQuickPick(
+          topics.map((t: any) => ({
             label: t.name,
             description: `${t.documentCount} document(s)`,
             topic: t,
@@ -208,118 +222,74 @@ export class CommandHandler {
           }
         );
 
-        if (!selectedTopic) {
+        if (!selected) {
           return;
         }
+
+        selectedTopic = selected.topic;
       }
 
-      // Select file
+      // Select files (can select multiple)
       const fileUris = await vscode.window.showOpenDialog({
         canSelectFiles: true,
         canSelectFolders: false,
-        canSelectMany: false,
+        canSelectMany: true, // Allow multiple file selection
         filters: {
-          'Supported Documents': ['pdf', 'md', 'markdown', 'html', 'htm'],
+          'Supported Documents': ['pdf', 'md', 'markdown', 'html', 'htm', 'txt'],
           'PDF': ['pdf'],
           'Markdown': ['md', 'markdown'],
           'HTML': ['html', 'htm'],
+          'Text': ['txt'],
         },
-        openLabel: 'Add Document',
+        openLabel: 'Add Document(s)',
       });
 
       if (!fileUris || fileUris.length === 0) {
         return;
       }
 
-      const fileUri = fileUris[0];
-      const filePath = fileUri.fsPath;
+      const filePaths = fileUris.map(uri => uri.fsPath);
+      logger.info(`Adding ${filePaths.length} document(s) to topic: ${selectedTopic.name}`);
 
-      // Process document
+      // Process documents using TopicManager
       await vscode.window.withProgress(
         {
           location: vscode.ProgressLocation.Notification,
-          title: 'Processing document...',
+          title: `Processing ${filePaths.length} document(s)...`,
           cancellable: false,
         },
         async (progress) => {
-          progress.report({ message: 'Reading file...' });
+          let currentFile = 0;
 
-          // Process the document
-          const processed = await DocumentProcessor.processDocument(filePath);
-
-          progress.report({ message: 'Splitting into semantic chunks...' });
-
-          // Get configuration
-          const config = vscode.workspace.getConfiguration(CONFIG.ROOT);
-          const chunkSize = config.get<number>('chunkSize', 512);
-          const chunkOverlap = config.get<number>('chunkOverlap', 50);
-
-          // Use semantic chunking based on markdown structure
-          const semanticChunks = DocumentProcessor.splitIntoSemanticChunks(
-            processed.markdown,
-            chunkSize,
-            chunkOverlap
-          );
-
-          progress.report({
-            message: `Creating embeddings for ${semanticChunks.length} semantic chunks...`,
-          });
-
-          // Initialize embedding service
-          await this.embeddingService.initialize();
-
-          // Extract text from semantic chunks
-          const chunkTexts = semanticChunks.map(c => c.text);
-
-          // Generate embeddings
-          const embeddings = await this.embeddingService.embedBatch(chunkTexts);
-
-          progress.report({ message: 'Saving to database...' });
-
-          // Create chunks with embeddings and semantic metadata
-          const chunks: TextChunk[] = semanticChunks.map((semanticChunk, index) => ({
-            id: `${Date.now()}-${index}`,
-            documentId: '', // Will be set by vectorDb
-            topicId: selectedTopic.topic.id,
-            text: semanticChunk.text,
-            embedding: embeddings[index],
-            metadata: {
-              documentName: processed.metadata.fileName,
-              chunkIndex: index,
-              startPosition: semanticChunk.startPosition,
-              endPosition: semanticChunk.endPosition,
-              headingPath: semanticChunk.headingPath,
-              headingLevel: semanticChunk.headingLevel,
-              sectionTitle: semanticChunk.sectionTitle,
-            },
-          }));
-
-          // Determine file type
-          let fileType: 'pdf' | 'markdown' | 'html' = 'markdown';
-          if (processed.metadata.fileType === 'pdf') {
-            fileType = 'pdf';
-          } else if (['html', 'htm'].includes(processed.metadata.fileType)) {
-            fileType = 'html';
-          }
-
-          // Add to database
-          await this.vectorDb.addDocument(
-            selectedTopic.topic.id,
-            processed.metadata.fileName,
-            filePath,
-            fileType,
-            chunks
+          const results = await this.topicManager.addDocuments(
+            selectedTopic.id,
+            filePaths,
+            {
+              onProgress: (pipelineProgress) => {
+                currentFile = Math.floor((pipelineProgress.progress / 100) * filePaths.length);
+                progress.report({
+                  message: `${pipelineProgress.message} (${currentFile + 1}/${filePaths.length})`,
+                  increment: pipelineProgress.progress / filePaths.length,
+                });
+              }
+            }
           );
 
           progress.report({ message: 'Complete!' });
+
+          const totalChunks = results.reduce((sum, r) => sum + r.pipelineResult.metadata.chunksStored, 0);
+          logger.info(`Documents added: ${results.length} files, ${totalChunks} chunks`);
+          currentFile++;
         }
       );
 
+      const stats = await this.topicManager.getTopicStats(selectedTopic.id);
       vscode.window.showInformationMessage(
-        `Document added to "${selectedTopic.topic.name}" successfully!`
+        `${filePaths.length} document(s) added to "${selectedTopic.name}" successfully! Total: ${stats?.documentCount} documents, ${stats?.chunkCount} chunks.`
       );
       this.treeDataProvider.refresh();
     } catch (error) {
+      logger.error(`Failed to add document: ${error}`);
       vscode.window.showErrorMessage(`Failed to add document: ${error}`);
     }
   }
@@ -355,11 +325,23 @@ export class CommandHandler {
       );
 
       if (confirmation === 'Clear Database') {
-        await this.vectorDb.clearDatabase();
+        logger.warn('Clearing entire database');
+
+        // Delete all topics (this will also clear their vector stores)
+        const topics = await this.topicManager.getAllTopics();
+        for (const topic of topics) {
+          await this.topicManager.deleteTopic(topic.id);
+        }
+
+        // Clear embedding service cache
+        await this.embeddingService.clearCache();
+
         vscode.window.showInformationMessage('Database cleared successfully.');
         this.treeDataProvider.refresh();
+        logger.info('Database cleared');
       }
     } catch (error) {
+      logger.error(`Failed to clear database: ${error}`);
       vscode.window.showErrorMessage(`Failed to clear database: ${error}`);
     }
   }

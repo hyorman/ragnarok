@@ -1,23 +1,25 @@
 /**
  * Main extension entry point
+ * Refactored to use new LangChain-based architecture
  */
 
 import * as vscode from 'vscode';
-import { VectorDatabaseService } from './vectorDatabase';
+import { TopicManager } from './managers/topicManager';
 import { EmbeddingService } from './embeddingService';
 import { RAGTool } from './ragTool';
 import { CommandHandler } from './commands';
 import { TopicTreeDataProvider } from './topicTreeView';
 import { VIEWS, STATE, COMMANDS } from './constants';
+import { Logger } from './utils/logger';
+
+const logger = new Logger('Extension');
 
 export async function activate(context: vscode.ExtensionContext) {
-  console.log('RAGnarōk extension is now active');
+  logger.info('RAGnarōk extension activating...');
 
   try {
-    // Initialize services
-    VectorDatabaseService.initialize(context);
-    const vectorDb = VectorDatabaseService.getInstance();
-    await vectorDb.loadDatabase();
+    // Initialize TopicManager (singleton with automatic initialization)
+    const topicManager = await TopicManager.getInstance(context);
 
     // Initialize embedding service instance (will load model on first use)
     EmbeddingService.getInstance();
@@ -31,23 +33,29 @@ export async function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(treeView);
 
     // Register commands
-    CommandHandler.registerCommands(context, treeDataProvider);
+    await CommandHandler.registerCommands(context, treeDataProvider);
 
-    // Load database with error handling for corrupted data
+    // Load topics with error handling
     try {
-      await vectorDb.loadDatabase();
+      const topics = await topicManager.getAllTopics();
+      logger.info(`Loaded ${topics.length} topics`);
     } catch (dbError) {
-      console.error('Database load error:', dbError);
-      // If database is corrupted, offer to reset it
+      logger.error('Failed to load topics', { error: dbError });
+      // If topics index is corrupted, offer to reset it
       const response = await vscode.window.showErrorMessage(
-        'Failed to load RAG database. Would you like to reset it?',
+        'Failed to load RAG topics. Would you like to reset the database?',
         'Reset Database',
         'Cancel'
       );
 
       if (response === 'Reset Database') {
-        await vectorDb.clearDatabase();
+        // Delete all topics to reset
+        const topics = await topicManager.getAllTopics();
+        for (const topic of topics) {
+          await topicManager.deleteTopic(topic.id);
+        }
         vscode.window.showInformationMessage('Database has been reset successfully.');
+        logger.info('Database reset completed');
       }
       // Don't throw - let the extension continue working
     }
@@ -90,21 +98,25 @@ export async function activate(context: vscode.ExtensionContext) {
       if (response === 'Create Topic') {
         vscode.commands.executeCommand(COMMANDS.CREATE_TOPIC);
       } else if (response === 'Learn More') {
-        vscode.env.openExternal(vscode.Uri.parse('https://github.com/yourusername/ragnarok'));
+        vscode.env.openExternal(vscode.Uri.parse('https://github.com/hyorman/ragnarok'));
       }
 
       await context.globalState.update(STATE.HAS_SHOWN_WELCOME, true);
     }
 
-    vscode.window.showInformationMessage('RAGnarōk extension activated successfully!');
+    logger.info('Extension activation complete');
   } catch (error) {
-    vscode.window.showErrorMessage(`Failed to activate RAGnarōk: ${error}`);
-    console.error('Activation error:', error);
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    logger.error('Failed to activate extension', { error: errorMessage });
     throw error; // Re-throw to signal activation failure
   }
 }
 
-export function deactivate() {
-  console.log('RAGnarōk extension is now deactivated');
+export async function deactivate() {
+  logger.info('RAGnarōk extension deactivating...');
+  // Clear any caches
+  const topicManager = await TopicManager.getInstance();
+  topicManager.clearCache();
+  logger.info('Extension deactivation complete');
 }
 
