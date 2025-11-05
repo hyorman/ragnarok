@@ -13,22 +13,44 @@ src/**
 .gitignore
 .yarnrc
 **/tsconfig.json
+**/tsconfig.test.json
 **/.tsconfig.json
+**/.tsconfig.test.json
 **/.eslintrc.json
 
 # Dependencies - exclude all node_modules by default
 node_modules/**
 
 # Runtime dependencies - include these for the extension to work
+
+# LangChain dependencies (CRITICAL - needed for document loading and vector stores)
+!node_modules/@langchain/**
+!node_modules/langchain/**
+!node_modules/langsmith/**
+!node_modules/uuid/**
+!node_modules/js-tiktoken/**
+!node_modules/flat/**
+!node_modules/zod/**
+!node_modules/zod-to-json-schema/**
+!node_modules/expr-eval/**
+!node_modules/decamelize/**
+!node_modules/ml-distance/**
+!node_modules/ml-distance-euclidean/**
+
+# Transformers.js for embeddings
 !node_modules/@huggingface/transformers/**
+!node_modules/@huggingface/jinja/**
 !node_modules/onnxruntime-common/**
 !node_modules/onnxruntime-node/**
 !node_modules/onnxruntime-web/**
+
+# Document loaders
 !node_modules/@mixmark-io/domino/**
 !node_modules/pdf-parse/**
 !node_modules/turndown/**
+!node_modules/node-fetch/**
 
-# Dependencies for sharp (image processing)
+# Sharp for image processing
 !node_modules/sharp/**
 !node_modules/@img/**
 !node_modules/detect-libc/**
@@ -38,5 +60,10 @@ node_modules/**
 !node_modules/color-name/**
 !node_modules/simple-swizzle/**
 
-# Dependencies for semver
+# Utility dependencies
 !node_modules/semver/**
+!node_modules/async-mutex/**
+
+# Optional: FAISS (if available)
+!node_modules/faiss-node/**
+!node_modules/bindings/**

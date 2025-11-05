@@ -15,6 +15,7 @@
   },
   "categories": [
     "Machine Learning",
+    "Extension Packs",
     "AI",
     "Chat",
     "Other"
@@ -287,7 +288,10 @@
                 },
                 "retrievalStrategy": {
                   "type": "string",
-                  "enum": ["vector", "hybrid"],
+                  "enum": [
+                    "vector",
+                    "hybrid"
+                  ],
                   "description": "Search strategy: 'vector' (semantic) or 'hybrid' (semantic + keyword)"
                 },
                 "useLLM": {
@@ -313,34 +317,59 @@
     "watch:tests": "tsc -watch -p ./tsconfig.test.json",
     "lint": "eslint src --ext ts",
     "package": "vsce package --allow-package-all-secrets --allow-package-env-file",
-    "test": "npm run compile && node ./out/test/runTests.js",
-    "test:unit": "mocha --require ts-node/register 'test/**/*.test.ts' --timeout 120000",
-    "test:compiled": "npm run compile && npm run compile:tests && mocha 'out/test/test/**/*.test.js' --timeout 120000",
+    "package:universal": "vsce package",
+    "package:win32-x64": "vsce package --target win32-x64",
+    "package:win32-arm64": "vsce package --target win32-arm64",
+    "package:darwin-x64": "vsce package --target darwin-x64",
+    "package:darwin-arm64": "vsce package --target darwin-arm64",
+    "package:linux-x64": "vsce package --target linux-x64",
+    "package:linux-arm64": "vsce package --target linux-arm64",
+    "package:all": "npm run package:win32-x64 && npm run package:win32-arm64 && npm run package:darwin-x64 && npm run package:darwin-arm64 && npm run package:linux-x64 && npm run package:linux-arm64",
+    "pretest": "npm run compile && npm run compile:tests",
+    "test": "node ./out/test/test/runTest.js",
+    "test:unit": "node ./out/test/test/runTest.js",
     "inspect:chunks": "npm run compile && node scripts/inspect-chunks.js",
     "clean": "rimraf out",
     "clean:test": "rimraf out/test"
   },
   "devDependencies": {
-    "@types/chai": "^4.3.11",
-    "@types/mocha": "^10.0.6",
-    "@types/node": "^20.10.0",
-    "@types/pdf-parse": "^1.1.5",
-    "@types/turndown": "^5.0.5",
-    "@types/vscode": "^1.85.0",
-    "@typescript-eslint/eslint-plugin": "^8.0.0",
-    "@typescript-eslint/parser": "^8.0.0",
-    "@vscode/test-electron": "^2.3.8",
+    "@types/chai": "^5.2.3",
+    "@types/mocha": "^10.0.10",
+    "@types/node": "^22.10.5",
+    "@types/vscode": "^1.105.0",
+    "@typescript-eslint/eslint-plugin": "^8.46.3",
+    "@typescript-eslint/parser": "^8.46.3",
+    "@vscode/test-cli": "^0.0.12",
+    "@vscode/test-electron": "^2.5.2",
     "@vscode/vsce": "^3.6.2",
-    "chai": "^4.4.1",
-    "eslint": "^9.15.0",
-    "mocha": "^11.0.0",
+    "chai": "^5.1.2",
+    "eslint": "^9.39.1",
+    "mocha": "^11.0.1",
     "rimraf": "^6.0.1",
-    "ts-node": "^10.9.2",
-    "typescript": "^5.3.2"
+    "typescript": "^5.9.3"
   },
   "dependencies": {
     "@huggingface/transformers": "^3.7.6",
-    "pdf-parse": "^1.1.1",
-    "turndown": "^7.1.2"
+    "@langchain/classic": "^1.0.1",
+    "@langchain/community": "^1.0.0",
+    "@langchain/core": "^1.0.0",
+    "@langchain/textsplitters": "^1.0.0",
+    "async-mutex": "^0.5.0",
+    "ignore": "^5.3.2",
+    "langchain": "^1.0.0"
+  },
+  "optionalDependencies": {
+    "@img/sharp-darwin-arm64": "^0.33.5",
+    "@img/sharp-darwin-x64": "^0.33.5",
+    "@img/sharp-linux-arm64": "^0.33.5",
+    "@img/sharp-linux-x64": "^0.33.5",
+    "@img/sharp-win32-ia32": "^0.33.5",
+    "@img/sharp-win32-x64": "^0.33.5",
+    "faiss-node": "^0.5.1"
+  },
+  "overrides": {
+    "fsevents": {
+      "install": ""
+    }
   }
 }

@@ -18,18 +18,20 @@ export const EXTENSION = {
  */
 export const CONFIG = {
   ROOT: 'ragnarok',
-  EMBEDDING_MODEL: 'ragnarok.embeddingModel',
-  TOP_K: 'ragnarok.topK',
-  CHUNK_SIZE: 'ragnarok.chunkSize',
-  CHUNK_OVERLAP: 'ragnarok.chunkOverlap',
-  PDF_STRUCTURE_DETECTION: 'ragnarok.pdfStructureDetection',
+  // Basic configuration
+  EMBEDDING_MODEL: 'embeddingModel',
+  TOP_K: 'topK',
+  CHUNK_SIZE: 'chunkSize',
+  CHUNK_OVERLAP: 'chunkOverlap',
+  PDF_STRUCTURE_DETECTION: 'pdfStructureDetection',
+  LOG_LEVEL: 'logLevel',
   // Agentic RAG configuration
-  USE_AGENTIC_MODE: 'useAgenticMode', //
+  USE_AGENTIC_MODE: 'useAgenticMode',
   AGENTIC_MAX_ITERATIONS: 'agenticMaxIterations',
   AGENTIC_CONFIDENCE_THRESHOLD: 'agenticConfidenceThreshold',
   AGENTIC_ITERATIVE_REFINEMENT: 'agenticIterativeRefinement',
   AGENTIC_RETRIEVAL_STRATEGY: 'agenticRetrievalStrategy',
-  AGENTIC_USE_LLM: 'agenticUseLLM', // plan query, evaluate results, evaluate result with context
+  AGENTIC_USE_LLM: 'agenticUseLLM',
   AGENTIC_LLM_MODEL: 'agenticLLMModel',
   AGENTIC_INCLUDE_WORKSPACE: 'agenticIncludeWorkspaceContext',
 } as const;
