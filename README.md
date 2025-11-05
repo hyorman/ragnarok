@@ -96,7 +96,6 @@ Open VSCode settings (`Cmd/Ctrl + ,`) and search for "RAGnarōk". Settings are o
 |---------|---------|-------------|
 | `agenticMaxIterations` | `3` | Max retrieval steps (1-10). Higher = more thorough |
 | `agenticConfidenceThreshold` | `0.7` | Confidence to stop (0-1). Lower = more iterations |
-| `agenticQueryDecomposition` | `true` | Break complex queries into sub-queries |
 | `agenticIterativeRefinement` | `true` | Generate follow-up queries for gaps |
 | `agenticRetrievalStrategy` | `hybrid` | **hybrid** (recommended) or **vector** only |
 
@@ -225,7 +224,6 @@ The extension registers a language model tool called `ragQuery` that can be used
     agenticConfig?: {                 // Agentic configuration (optional)
       maxIterations?: number,         // Max retrieval steps (1-10)
       confidenceThreshold?: number,   // Confidence threshold (0-1)
-      enableQueryDecomposition?: boolean,
       enableIterativeRefinement?: boolean,
       retrievalStrategy?: 'vector' | 'hybrid'
     }

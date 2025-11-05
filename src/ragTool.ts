@@ -57,8 +57,9 @@ export class RAGTool {
     try {
       // Get configuration
       const config = vscode.workspace.getConfiguration(CONFIG.ROOT);
-      const defaultTopK = config.get<number>('topK', 5);
-      const topK = params.topK || defaultTopK;
+      const configTopK = config.get<number>('topK', 5);
+      // Only use tool parameter if explicitly provided, otherwise use config value
+      const topK = params.topK !== undefined ? params.topK : configTopK;
 
       // Initialize embedding service if needed
       await this.embeddingService.initialize();
@@ -106,6 +107,7 @@ export class RAGTool {
           topicMatch.topic.id,
           params.query,
           agenticConfig,
+          topK,
           context,
           workspaceContext
         );
@@ -167,7 +169,6 @@ export class RAGTool {
     return {
       maxIterations: userConfig.maxIterations ?? config.get<number>(CONFIG.AGENTIC_MAX_ITERATIONS, 3),
       confidenceThreshold: userConfig.confidenceThreshold ?? config.get<number>(CONFIG.AGENTIC_CONFIDENCE_THRESHOLD, 0.7),
-      enableQueryDecomposition: userConfig.enableQueryDecomposition ?? config.get<boolean>(CONFIG.AGENTIC_QUERY_DECOMPOSITION, true),
       enableIterativeRefinement: userConfig.enableIterativeRefinement ?? config.get<boolean>(CONFIG.AGENTIC_ITERATIVE_REFINEMENT, true),
       retrievalStrategy: userConfig.retrievalStrategy ?? config.get<'vector' | 'hybrid'>(CONFIG.AGENTIC_RETRIEVAL_STRATEGY, 'hybrid'),
       useLLM: userConfig.useLLM ?? config.get<boolean>(CONFIG.AGENTIC_USE_LLM, false),
