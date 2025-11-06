@@ -7,14 +7,14 @@
  * - Optional: FaissStore (for better performance with large datasets)
  */
 
-import * as vscode from 'vscode';
-import * as path from 'path';
-import * as fs from 'fs/promises';
-import { MemoryVectorStore } from '@langchain/classic/vectorstores/memory';
-import { VectorStore } from '@langchain/core/vectorstores';
-import { Embeddings } from '@langchain/core/embeddings';
-import { Document as LangChainDocument } from '@langchain/core/documents';
-import { Logger } from '../utils/logger';
+import * as vscode from "vscode";
+import * as path from "path";
+import * as fs from "fs/promises";
+import { MemoryVectorStore } from "@langchain/classic/vectorstores/memory";
+import { VectorStore } from "@langchain/core/vectorstores";
+import { Embeddings } from "@langchain/core/embeddings";
+import { Document as LangChainDocument } from "@langchain/core/documents";
+import { Logger } from "../utils/logger";
 
 // Try to import FAISS (optional dependency)
 // FAISS provides better performance for large datasets but requires native compilation
@@ -25,22 +25,30 @@ let faissError: string | null = null;
 
 try {
   // Dynamic import to handle optional dependency
-  const faissModule = require('@langchain/community/vectorstores/faiss');
+  const faissModule = require("@langchain/community/vectorstores/faiss");
   FaissStore = faissModule.FaissStore;
   faissAvailable = true;
-  console.log('✓ FAISS vector store available - will use for better performance with large datasets');
+  console.log(
+    "✓ FAISS vector store available - will use for better performance with large datasets"
+  );
 } catch (error) {
   // FAISS not available - this is completely fine, MemoryVectorStore works great
   faissAvailable = false;
   faissError = error instanceof Error ? error.message : String(error);
-  console.log('ℹ️  FAISS not available - using MemoryVectorStore (this is perfectly fine for most use cases)');
-  if (faissError.includes('Cannot find module')) {
-    console.log('   Reason: faiss-node is an optional dependency that requires native compilation');
-    console.log('   Impact: None - MemoryVectorStore provides excellent performance for typical workloads');
+  console.log(
+    "ℹ️  FAISS not available - using MemoryVectorStore (this is perfectly fine for most use cases)"
+  );
+  if (faissError.includes("Cannot find module")) {
+    console.log(
+      "   Reason: faiss-node is an optional dependency that requires native compilation"
+    );
+    console.log(
+      "   Impact: None - MemoryVectorStore provides excellent performance for typical workloads"
+    );
   }
 }
 
-export type VectorStoreType = 'memory' | 'faiss';
+export type VectorStoreType = "memory" | "faiss";
 
 export interface VectorStoreConfig {
   type: VectorStoreType;
@@ -53,6 +61,7 @@ export interface VectorStoreMetadata {
   topicId: string;
   documentCount: number;
   chunkCount: number;
+  embeddingModel: string;
   createdAt: number;
   updatedAt: number;
 }
@@ -65,15 +74,22 @@ export class VectorStoreFactory {
   private embeddings: Embeddings;
   private storageDir: string;
   private storeCache: Map<string, VectorStore> = new Map();
+  private embeddingModel: string;
 
-  constructor(embeddings: Embeddings, storageDir: string) {
-    this.logger = new Logger('VectorStoreFactory');
+  constructor(
+    embeddings: Embeddings,
+    storageDir: string,
+    embeddingModel: string
+  ) {
+    this.logger = new Logger("VectorStoreFactory");
     this.embeddings = embeddings;
     this.storageDir = storageDir;
+    this.embeddingModel = embeddingModel;
 
-    this.logger.info('VectorStoreFactory initialized', {
+    this.logger.info("VectorStoreFactory initialized", {
       faissAvailable,
       storageDir,
+      embeddingModel,
     });
   }
 
@@ -90,8 +106,15 @@ export class VectorStoreFactory {
   public static getFaissStatus(): { available: boolean; error?: string } {
     return {
       available: faissAvailable,
-      error: faissError || undefined
+      error: faissError || undefined,
     };
+  }
+
+  /**
+   * Get the current embedding model name
+   */
+  public getEmbeddingModel(): string {
+    return this.embeddingModel;
   }
 
   /**
@@ -100,16 +123,18 @@ export class VectorStoreFactory {
   public getRecommendedStoreType(expectedChunkCount?: number): VectorStoreType {
     // Use FAISS for larger datasets if available
     if (faissAvailable && expectedChunkCount && expectedChunkCount > 1000) {
-      this.logger.debug('Recommending FAISS for large dataset', { expectedChunkCount });
-      return 'faiss';
+      this.logger.debug("Recommending FAISS for large dataset", {
+        expectedChunkCount,
+      });
+      return "faiss";
     }
 
     // Default to memory store
-    this.logger.debug('Recommending MemoryVectorStore', {
+    this.logger.debug("Recommending MemoryVectorStore", {
       faissAvailable,
-      expectedChunkCount
+      expectedChunkCount,
     });
-    return 'memory';
+    return "memory";
   }
 
   /**
@@ -119,41 +144,50 @@ export class VectorStoreFactory {
     config: VectorStoreConfig,
     initialDocuments?: LangChainDocument[]
   ): Promise<VectorStore> {
-    this.logger.info('Creating vector store', {
+    this.logger.info("Creating vector store", {
       type: config.type,
       topicId: config.topicId,
-      documentCount: initialDocuments?.length || 0
+      documentCount: initialDocuments?.length || 0,
     });
 
     let store: VectorStore;
 
     try {
-      if (config.type === 'faiss' && faissAvailable) {
+      if (config.type === "faiss" && faissAvailable) {
         // Create FAISS store
         store = await this.createFaissStore(config, initialDocuments);
       } else {
         // Create or fallback to Memory store
-        if (config.type === 'faiss' && !faissAvailable) {
-          this.logger.warn('FAISS requested but not available, falling back to MemoryVectorStore');
-          this.logger.info('MemoryVectorStore provides excellent performance for most use cases');
-          this.logger.info('To enable FAISS: Ensure native compilation tools are available, then reinstall');
+        if (config.type === "faiss" && !faissAvailable) {
+          this.logger.warn(
+            "FAISS requested but not available, falling back to MemoryVectorStore"
+          );
+          this.logger.info(
+            "MemoryVectorStore provides excellent performance for most use cases"
+          );
+          this.logger.info(
+            "To enable FAISS: Ensure native compilation tools are available, then reinstall"
+          );
         }
-        store = await this.createMemoryStore(config, initialDocuments) as any as VectorStore;
+        store = (await this.createMemoryStore(
+          config,
+          initialDocuments
+        )) as any as VectorStore;
       }
 
       // Cache the store
       this.storeCache.set(config.topicId, store);
 
-      this.logger.info('Vector store created successfully', {
+      this.logger.info("Vector store created successfully", {
         type: config.type,
-        topicId: config.topicId
+        topicId: config.topicId,
       });
 
       return store;
     } catch (error) {
-      this.logger.error('Failed to create vector store', {
+      this.logger.error("Failed to create vector store", {
         error: error instanceof Error ? error.message : String(error),
-        config
+        config,
       });
       throw error;
     }
@@ -166,59 +200,128 @@ export class VectorStoreFactory {
     topicId: string,
     preferredType?: VectorStoreType
   ): Promise<VectorStore | null> {
-    this.logger.info('Loading vector store', { topicId, preferredType });
+    this.logger.info("Loading vector store", { topicId, preferredType });
 
     // Check cache first
     const cachedStore = this.storeCache.get(topicId);
     if (cachedStore) {
-      this.logger.debug('Returning cached store', { topicId });
+      this.logger.debug("Returning cached store", { topicId });
       return cachedStore;
     }
 
     try {
       // Try to load from disk
-      const storePath = this.getStorePath(topicId);
       const metadataPath = this.getMetadataPath(topicId);
 
       // Check if store exists
       try {
         await fs.access(metadataPath);
       } catch {
-        this.logger.debug('Store not found', { topicId });
+        this.logger.debug("Store not found", { topicId });
         return null;
       }
 
       // Load metadata
-      const metadataJson = await fs.readFile(metadataPath, 'utf-8');
+      const metadataJson = await fs.readFile(metadataPath, "utf-8");
       const metadata: VectorStoreMetadata = JSON.parse(metadataJson);
 
       let store: VectorStore;
 
       // Load based on type (with fallback)
-      if (metadata.type === 'faiss' && faissAvailable) {
+      if (metadata.type === "faiss" && faissAvailable) {
         store = await this.loadFaissStore(topicId);
       } else {
-        if (metadata.type === 'faiss' && !faissAvailable) {
-          this.logger.warn('FAISS store found but FAISS not available, falling back to MemoryVectorStore');
+        if (metadata.type === "faiss" && !faissAvailable) {
+          this.logger.warn(
+            "FAISS store found but FAISS not available, falling back to MemoryVectorStore"
+          );
         }
-        store = await this.loadMemoryStore(topicId) as any as VectorStore;
+        store = (await this.loadMemoryStore(topicId)) as any as VectorStore;
       }
 
       // Cache the loaded store
       this.storeCache.set(topicId, store);
 
-      this.logger.info('Vector store loaded successfully', {
+      this.logger.info("Vector store loaded successfully", {
         topicId,
-        type: metadata.type
+        type: metadata.type,
       });
 
       return store;
     } catch (error) {
-      this.logger.error('Failed to load vector store', {
+      this.logger.error("Failed to load vector store", {
         error: error instanceof Error ? error.message : String(error),
-        topicId
+        topicId,
       });
       return null;
+    }
+  }
+
+  /**
+   * Get metadata for a vector store without loading the entire store
+   */
+  public async getStoreMetadata(
+    topicId: string
+  ): Promise<VectorStoreMetadata | null> {
+    try {
+      const metadataPath = this.getMetadataPath(topicId);
+
+      // Check if metadata file exists
+      try {
+        await fs.access(metadataPath);
+      } catch {
+        return null;
+      }
+
+      // Read and parse metadata
+      const metadataJson = await fs.readFile(metadataPath, "utf-8");
+      const metadata: VectorStoreMetadata = JSON.parse(metadataJson);
+
+      return metadata;
+    } catch (error) {
+      this.logger.error("Failed to read store metadata", {
+        error: error instanceof Error ? error.message : String(error),
+        topicId,
+      });
+      return null;
+    }
+  }
+
+  /**
+   * Validate that the current embedding model matches the store's model
+   * @throws Error if models don't match
+   */
+  public async validateEmbeddingModel(topicId: string): Promise<void> {
+    const metadata = await this.getStoreMetadata(topicId);
+
+    if (!metadata) {
+      // No existing store, validation not needed
+      return;
+    }
+
+    // Check for model mismatch
+    if (
+      metadata.embeddingModel &&
+      metadata.embeddingModel !== this.embeddingModel
+    ) {
+      const error = new Error(
+        `Embedding model mismatch for topic ${topicId}.\n` +
+          `Existing embeddings use: "${metadata.embeddingModel}"\n` +
+          `Current model is: "${this.embeddingModel}"\n\n` +
+          `Cannot add documents with a different embedding model as this would corrupt the vector store.\n` +
+          `Please either:\n` +
+          `1. Change the embedding model back to "${metadata.embeddingModel}" in settings, or\n` +
+          `2. Create a new topic with the current model, or\n` +
+          `3. Delete and recreate this topic with the new model`
+      );
+
+      this.logger.error("Embedding model mismatch detected", {
+        topicId,
+        existingModel: metadata.embeddingModel,
+        currentModel: this.embeddingModel,
+      });
+
+      throw error;
     }
   }
 
@@ -230,7 +333,7 @@ export class VectorStoreFactory {
     store: VectorStore,
     metadata: Partial<VectorStoreMetadata>
   ): Promise<void> {
-    this.logger.info('Saving vector store', { topicId });
+    this.logger.info("Saving vector store", { topicId });
 
     try {
       const storePath = this.getStorePath(topicId);
@@ -240,10 +343,11 @@ export class VectorStoreFactory {
       await fs.mkdir(path.dirname(storePath), { recursive: true });
 
       // Determine store type
-      const storeType = FaissStore && store instanceof FaissStore ? 'faiss' : 'memory';
+      const storeType =
+        FaissStore && store instanceof FaissStore ? "faiss" : "memory";
 
       // Save the store
-      if (storeType === 'faiss' && FaissStore && store instanceof FaissStore) {
+      if (storeType === "faiss" && FaissStore && store instanceof FaissStore) {
         // FAISS stores have a save method
         await (store as any).save(storePath);
       } else if (store instanceof MemoryVectorStore) {
@@ -252,7 +356,7 @@ export class VectorStoreFactory {
         await fs.writeFile(
           storePath,
           JSON.stringify({ vectors }, null, 2),
-          'utf-8'
+          "utf-8"
         );
       }
 
@@ -262,6 +366,7 @@ export class VectorStoreFactory {
         topicId,
         documentCount: metadata.documentCount || 0,
         chunkCount: metadata.chunkCount || 0,
+        embeddingModel: metadata.embeddingModel || this.embeddingModel,
         createdAt: metadata.createdAt || Date.now(),
         updatedAt: Date.now(),
       };
@@ -269,17 +374,17 @@ export class VectorStoreFactory {
       await fs.writeFile(
         metadataPath,
         JSON.stringify(fullMetadata, null, 2),
-        'utf-8'
+        "utf-8"
       );
 
-      this.logger.info('Vector store saved successfully', {
+      this.logger.info("Vector store saved successfully", {
         topicId,
-        type: storeType
+        type: storeType,
       });
     } catch (error) {
-      this.logger.error('Failed to save vector store', {
+      this.logger.error("Failed to save vector store", {
         error: error instanceof Error ? error.message : String(error),
-        topicId
+        topicId,
       });
       throw error;
     }
@@ -289,7 +394,7 @@ export class VectorStoreFactory {
    * Delete a vector store
    */
   public async deleteStore(topicId: string): Promise<void> {
-    this.logger.info('Deleting vector store', { topicId });
+    this.logger.info("Deleting vector store", { topicId });
 
     try {
       // Remove from cache
@@ -311,11 +416,11 @@ export class VectorStoreFactory {
         // File might not exist
       }
 
-      this.logger.info('Vector store deleted successfully', { topicId });
+      this.logger.info("Vector store deleted successfully", { topicId });
     } catch (error) {
-      this.logger.error('Failed to delete vector store', {
+      this.logger.error("Failed to delete vector store", {
         error: error instanceof Error ? error.message : String(error),
-        topicId
+        topicId,
       });
       throw error;
     }
@@ -329,23 +434,23 @@ export class VectorStoreFactory {
     store: VectorStore,
     documents: LangChainDocument[]
   ): Promise<void> {
-    this.logger.info('Adding documents to vector store', {
+    this.logger.info("Adding documents to vector store", {
       topicId,
-      documentCount: documents.length
+      documentCount: documents.length,
     });
 
     try {
       await store.addDocuments(documents);
 
-      this.logger.info('Documents added successfully', {
+      this.logger.info("Documents added successfully", {
         topicId,
-        documentCount: documents.length
+        documentCount: documents.length,
       });
     } catch (error) {
-      this.logger.error('Failed to add documents', {
+      this.logger.error("Failed to add documents", {
         error: error instanceof Error ? error.message : String(error),
         topicId,
-        documentCount: documents.length
+        documentCount: documents.length,
       });
       throw error;
     }
@@ -357,10 +462,10 @@ export class VectorStoreFactory {
   public clearCache(topicId?: string): void {
     if (topicId) {
       this.storeCache.delete(topicId);
-      this.logger.debug('Cache cleared for topic', { topicId });
+      this.logger.debug("Cache cleared for topic", { topicId });
     } else {
       this.storeCache.clear();
-      this.logger.debug('All store cache cleared');
+      this.logger.debug("All store cache cleared");
     }
   }
 
@@ -373,7 +478,9 @@ export class VectorStoreFactory {
     config: VectorStoreConfig,
     initialDocuments?: LangChainDocument[]
   ): Promise<MemoryVectorStore> {
-    this.logger.debug('Creating MemoryVectorStore', { topicId: config.topicId });
+    this.logger.debug("Creating MemoryVectorStore", {
+      topicId: config.topicId,
+    });
 
     if (initialDocuments && initialDocuments.length > 0) {
       return await MemoryVectorStore.fromDocuments(
@@ -393,28 +500,22 @@ export class VectorStoreFactory {
     initialDocuments?: LangChainDocument[]
   ): Promise<any> {
     if (!FaissStore) {
-      throw new Error('FAISS is not available');
+      throw new Error("FAISS is not available");
     }
 
-    this.logger.debug('Creating FaissStore', { topicId: config.topicId });
+    this.logger.debug("Creating FaissStore", { topicId: config.topicId });
 
     if (initialDocuments && initialDocuments.length > 0) {
-      return await FaissStore.fromDocuments(
-        initialDocuments,
-        this.embeddings
-      );
+      return await FaissStore.fromDocuments(initialDocuments, this.embeddings);
     } else {
       // FAISS requires at least one document to initialize
       // Create with a dummy document that will be removed
       const dummyDoc = new LangChainDocument({
-        pageContent: '_dummy_initialization_document_',
+        pageContent: "_dummy_initialization_document_",
         metadata: { isDummy: true },
       });
 
-      const store = await FaissStore.fromDocuments(
-        [dummyDoc],
-        this.embeddings
-      );
+      const store = await FaissStore.fromDocuments([dummyDoc], this.embeddings);
 
       // Note: We can't easily remove the dummy doc, but it won't affect search
       // as it has very different content from real documents
@@ -427,12 +528,12 @@ export class VectorStoreFactory {
    * Load a Memory vector store from disk
    */
   private async loadMemoryStore(topicId: string): Promise<MemoryVectorStore> {
-    this.logger.debug('Loading MemoryVectorStore', { topicId });
+    this.logger.debug("Loading MemoryVectorStore", { topicId });
 
     const storePath = this.getStorePath(topicId);
 
     try {
-      const data = await fs.readFile(storePath, 'utf-8');
+      const data = await fs.readFile(storePath, "utf-8");
       const { vectors } = JSON.parse(data);
 
       // Reconstruct the store from serialized data
@@ -441,19 +542,22 @@ export class VectorStoreFactory {
       // Manually populate the store
       // Note: This is a workaround since MemoryVectorStore doesn't have native persistence
       if (vectors && vectors.length > 0) {
-        const documents = vectors.map((v: any) => new LangChainDocument({
-          pageContent: v.content,
-          metadata: v.metadata,
-        }));
+        const documents = vectors.map(
+          (v: any) =>
+            new LangChainDocument({
+              pageContent: v.content,
+              metadata: v.metadata,
+            })
+        );
 
         await store.addDocuments(documents);
       }
 
       return store;
     } catch (error) {
-      this.logger.warn('Failed to load MemoryVectorStore, creating new one', {
+      this.logger.warn("Failed to load MemoryVectorStore, creating new one", {
         error: error instanceof Error ? error.message : String(error),
-        topicId
+        topicId,
       });
       return new MemoryVectorStore(this.embeddings);
     }
@@ -464,10 +568,10 @@ export class VectorStoreFactory {
    */
   private async loadFaissStore(topicId: string): Promise<any> {
     if (!FaissStore) {
-      throw new Error('FAISS is not available');
+      throw new Error("FAISS is not available");
     }
 
-    this.logger.debug('Loading FaissStore', { topicId });
+    this.logger.debug("Loading FaissStore", { topicId });
 
     const storePath = this.getStorePath(topicId);
     return await FaissStore.load(storePath, this.embeddings);
