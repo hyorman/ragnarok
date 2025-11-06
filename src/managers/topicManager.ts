@@ -6,16 +6,20 @@
  * Replaces manual topic management from vectorDatabase.ts
  */
 
-import * as vscode from 'vscode';
-import * as fs from 'fs/promises';
-import * as path from 'path';
-import { VectorStore } from '@langchain/core/vectorstores';
-import { Topic, TopicsIndex, Document as TopicDocument } from '../types';
-import { DocumentPipeline, PipelineOptions, PipelineResult } from './documentPipeline';
-import { VectorStoreFactory } from '../stores/vectorStoreFactory';
-import { EmbeddingService } from '../embeddingService';
-import { Logger } from '../utils/logger';
-import { EXTENSION, CONFIG } from '../constants';
+import * as vscode from "vscode";
+import * as fs from "fs/promises";
+import * as path from "path";
+import { VectorStore } from "@langchain/core/vectorstores";
+import { Topic, TopicsIndex, Document as TopicDocument } from "../types";
+import {
+  DocumentPipeline,
+  PipelineOptions,
+  PipelineResult,
+} from "./documentPipeline";
+import { VectorStoreFactory } from "../stores/vectorStoreFactory";
+import { EmbeddingService } from "../embeddingService";
+import { Logger } from "../utils/logger";
+import { EXTENSION, CONFIG } from "../constants";
 
 export interface CreateTopicOptions {
   name: string;
@@ -28,7 +32,7 @@ export interface TopicStats {
   documentCount: number;
   chunkCount: number;
   lastUpdated: number;
-  vectorStoreType: 'memory' | 'faiss';
+  vectorStoreType: "memory" | "faiss";
   embeddingModel: string;
 }
 
@@ -60,17 +64,21 @@ export class TopicManager {
 
   private constructor(context: vscode.ExtensionContext) {
     this.context = context;
-    this.logger = new Logger('TopicManager');
+    this.logger = new Logger("TopicManager");
     this.documentPipeline = new DocumentPipeline();
     this.embeddingService = EmbeddingService.getInstance();
 
-    this.logger.info('TopicManager created');
+    this.logger.info("TopicManager created");
   }
 
-  public static async getInstance(context?: vscode.ExtensionContext): Promise<TopicManager> {
+  public static async getInstance(
+    context?: vscode.ExtensionContext
+  ): Promise<TopicManager> {
     if (!TopicManager.instance) {
       if (!context) {
-        throw new Error('TopicManager not initialized. Context required for first call.');
+        throw new Error(
+          "TopicManager not initialized. Context required for first call."
+        );
       }
       TopicManager.instance = new TopicManager(context);
       // Automatically initialize on first getInstance call
@@ -91,11 +99,11 @@ export class TopicManager {
    */
   private async init(): Promise<void> {
     if (this.isInitialized) {
-      this.logger.info('TopicManager already initialized, skipping');
+      this.logger.info("TopicManager already initialized, skipping");
       return;
     }
 
-    this.logger.info('Initializing TopicManager');
+    this.logger.info("Initializing TopicManager");
 
     try {
       // Ensure storage directory exists
@@ -106,7 +114,10 @@ export class TopicManager {
 
       // Get embedding model from config
       const config = vscode.workspace.getConfiguration(CONFIG.ROOT);
-      const embeddingModel = config.get<string>(CONFIG.EMBEDDING_MODEL, 'Xenova/all-MiniLM-L6-v2');
+      const embeddingModel = config.get<string>(
+        CONFIG.EMBEDDING_MODEL,
+        "Xenova/all-MiniLM-L6-v2"
+      );
 
       // Initialize document pipeline
       const storageDir = this.getDatabaseDir();
@@ -122,15 +133,19 @@ export class TopicManager {
         },
       };
 
-      this.vectorStoreFactory = new VectorStoreFactory(embeddingsWrapper as any, storageDir);
+      this.vectorStoreFactory = new VectorStoreFactory(
+        embeddingsWrapper as any,
+        storageDir,
+        embeddingModel
+      );
 
       this.isInitialized = true;
-      this.logger.info('TopicManager initialized successfully', {
+      this.logger.info("TopicManager initialized successfully", {
         topicCount: Object.keys(this.topicsIndex?.topics || {}).length,
         embeddingModel,
       });
     } catch (error) {
-      this.logger.error('Failed to initialize TopicManager', {
+      this.logger.error("Failed to initialize TopicManager", {
         error: error instanceof Error ? error.message : String(error),
       });
       throw error;
@@ -141,12 +156,12 @@ export class TopicManager {
    * Create a new topic
    */
   public async createTopic(options: CreateTopicOptions): Promise<Topic> {
-    this.logger.info('Creating topic', { name: options.name });
+    this.logger.info("Creating topic", { name: options.name });
 
     try {
       // Ensure initialized
       if (!this.topicsIndex) {
-        throw new Error('TopicManager not initialized');
+        throw new Error("TopicManager not initialized");
       }
 
       // Check for duplicate names
@@ -185,7 +200,7 @@ export class TopicManager {
 
       // Add initial documents if provided
       if (options.initialDocuments && options.initialDocuments.length > 0) {
-        this.logger.info('Adding initial documents to topic', {
+        this.logger.info("Adding initial documents to topic", {
           topicId: topic.id,
           documentCount: options.initialDocuments.length,
         });
@@ -193,11 +208,14 @@ export class TopicManager {
         await this.addDocuments(topic.id, options.initialDocuments);
       }
 
-      this.logger.info('Topic created successfully', { topicId: topic.id, name: topic.name });
+      this.logger.info("Topic created successfully", {
+        topicId: topic.id,
+        name: topic.name,
+      });
 
       return topic;
     } catch (error) {
-      this.logger.error('Failed to create topic', {
+      this.logger.error("Failed to create topic", {
         error: error instanceof Error ? error.message : String(error),
         name: options.name,
       });
@@ -209,11 +227,11 @@ export class TopicManager {
    * Delete a topic and its vector store
    */
   public async deleteTopic(topicId: string): Promise<void> {
-    this.logger.info('Deleting topic', { topicId });
+    this.logger.info("Deleting topic", { topicId });
 
     try {
       if (!this.topicsIndex || !this.vectorStoreFactory) {
-        throw new Error('TopicManager not initialized');
+        throw new Error("TopicManager not initialized");
       }
 
       // Check if topic exists
@@ -230,6 +248,14 @@ export class TopicManager {
       this.vectorStoreCache.delete(topicId);
       this.topicDocuments.delete(topicId);
 
+      // Delete document metadata file
+      try {
+        const documentsPath = this.getTopicDocumentsPath(topicId);
+        await fs.unlink(documentsPath);
+      } catch {
+        // File might not exist
+      }
+
       // Remove from index
       delete this.topicsIndex.topics[topicId];
       this.topicsIndex.lastUpdated = Date.now();
@@ -237,9 +263,9 @@ export class TopicManager {
       // Save index
       await this.saveTopicsIndex();
 
-      this.logger.info('Topic deleted successfully', { topicId, topicName });
+      this.logger.info("Topic deleted successfully", { topicId, topicName });
     } catch (error) {
-      this.logger.error('Failed to delete topic', {
+      this.logger.error("Failed to delete topic", {
         error: error instanceof Error ? error.message : String(error),
         topicId,
       });
@@ -252,13 +278,13 @@ export class TopicManager {
    */
   public async updateTopic(
     topicId: string,
-    updates: Partial<Pick<Topic, 'name' | 'description'>>
+    updates: Partial<Pick<Topic, "name" | "description">>
   ): Promise<Topic> {
-    this.logger.info('Updating topic', { topicId, updates });
+    this.logger.info("Updating topic", { topicId, updates });
 
     try {
       if (!this.topicsIndex) {
-        throw new Error('TopicManager not initialized');
+        throw new Error("TopicManager not initialized");
       }
 
       const topic = this.topicsIndex.topics[topicId];
@@ -269,7 +295,9 @@ export class TopicManager {
       // Check for name conflicts if renaming
       if (updates.name && updates.name !== topic.name) {
         const existingTopic = Object.values(this.topicsIndex.topics).find(
-          (t) => t.id !== topicId && t.name.toLowerCase() === updates.name!.toLowerCase()
+          (t) =>
+            t.id !== topicId &&
+            t.name.toLowerCase() === updates.name!.toLowerCase()
         );
 
         if (existingTopic) {
@@ -279,18 +307,19 @@ export class TopicManager {
 
       // Apply updates
       if (updates.name) topic.name = updates.name;
-      if (updates.description !== undefined) topic.description = updates.description;
+      if (updates.description !== undefined)
+        topic.description = updates.description;
       topic.updatedAt = Date.now();
 
       // Save index
       this.topicsIndex.lastUpdated = Date.now();
       await this.saveTopicsIndex();
 
-      this.logger.info('Topic updated successfully', { topicId });
+      this.logger.info("Topic updated successfully", { topicId });
 
       return topic;
     } catch (error) {
-      this.logger.error('Failed to update topic', {
+      this.logger.error("Failed to update topic", {
         error: error instanceof Error ? error.message : String(error),
         topicId,
       });
@@ -337,14 +366,14 @@ export class TopicManager {
     filePaths: string[],
     options?: PipelineOptions
   ): Promise<AddDocumentResult[]> {
-    this.logger.info('Adding documents to topic', {
+    this.logger.info("Adding documents to topic", {
       topicId,
       documentCount: filePaths.length,
     });
 
     try {
       if (!this.topicsIndex) {
-        throw new Error('TopicManager not initialized');
+        throw new Error("TopicManager not initialized");
       }
 
       const topic = this.topicsIndex.topics[topicId];
@@ -365,7 +394,7 @@ export class TopicManager {
           );
 
           if (!pipelineResult.success) {
-            this.logger.warn('Document processing failed', {
+            this.logger.warn("Document processing failed", {
               filePath,
               errors: pipelineResult.errors,
             });
@@ -398,14 +427,14 @@ export class TopicManager {
             pipelineResult,
           });
 
-          this.logger.info('Document added successfully', {
+          this.logger.info("Document added successfully", {
             topicId,
             documentId: document.id,
             fileName,
             chunkCount: document.chunkCount,
           });
         } catch (error) {
-          this.logger.error('Failed to add document', {
+          this.logger.error("Failed to add document", {
             error: error instanceof Error ? error.message : String(error),
             filePath,
           });
@@ -419,7 +448,10 @@ export class TopicManager {
       this.topicsIndex.lastUpdated = Date.now();
       await this.saveTopicsIndex();
 
-      this.logger.info('Documents added to topic', {
+      // Persist document metadata to disk
+      await this.saveTopicDocuments(topicId);
+
+      this.logger.info("Documents added to topic", {
         topicId,
         successCount: results.length,
         totalCount: filePaths.length,
@@ -427,7 +459,7 @@ export class TopicManager {
 
       return results;
     } catch (error) {
-      this.logger.error('Failed to add documents', {
+      this.logger.error("Failed to add documents", {
         error: error instanceof Error ? error.message : String(error),
         topicId,
       });
@@ -439,17 +471,17 @@ export class TopicManager {
    * Get vector store for a topic
    */
   public async getVectorStore(topicId: string): Promise<VectorStore | null> {
-    this.logger.debug('Getting vector store', { topicId });
+    this.logger.debug("Getting vector store", { topicId });
 
     try {
       if (!this.vectorStoreFactory) {
-        throw new Error('TopicManager not initialized');
+        throw new Error("TopicManager not initialized");
       }
 
       // Check cache first
       const cachedStore = this.vectorStoreCache.get(topicId);
       if (cachedStore) {
-        this.logger.debug('Returning cached vector store', { topicId });
+        this.logger.debug("Returning cached vector store", { topicId });
         return cachedStore;
       }
 
@@ -458,12 +490,12 @@ export class TopicManager {
 
       if (store) {
         this.vectorStoreCache.set(topicId, store);
-        this.logger.debug('Vector store loaded and cached', { topicId });
+        this.logger.debug("Vector store loaded and cached", { topicId });
       }
 
       return store;
     } catch (error) {
-      this.logger.error('Failed to get vector store', {
+      this.logger.error("Failed to get vector store", {
         error: error instanceof Error ? error.message : String(error),
         topicId,
       });
@@ -475,7 +507,7 @@ export class TopicManager {
    * Get statistics for a topic
    */
   public async getTopicStats(topicId: string): Promise<TopicStats | null> {
-    this.logger.debug('Getting topic stats', { topicId });
+    this.logger.debug("Getting topic stats", { topicId });
 
     try {
       if (!this.topicsIndex || !this.vectorStoreFactory) {
@@ -497,13 +529,13 @@ export class TopicManager {
       );
 
       let chunkCount = 0;
-      let vectorStoreType: 'memory' | 'faiss' = 'memory';
+      let vectorStoreType: "memory" | "faiss" = "memory";
 
       try {
-        const metadataJson = await fs.readFile(metadataPath, 'utf-8');
+        const metadataJson = await fs.readFile(metadataPath, "utf-8");
         const metadata = JSON.parse(metadataJson);
         chunkCount = metadata.chunkCount || 0;
-        vectorStoreType = metadata.type || 'memory';
+        vectorStoreType = metadata.type || "memory";
       } catch {
         // Metadata not available
       }
@@ -516,7 +548,7 @@ export class TopicManager {
         embeddingModel: this.topicsIndex.modelName,
       };
     } catch (error) {
-      this.logger.error('Failed to get topic stats', {
+      this.logger.error("Failed to get topic stats", {
         error: error instanceof Error ? error.message : String(error),
         topicId,
       });
@@ -530,10 +562,10 @@ export class TopicManager {
   public clearCache(topicId?: string): void {
     if (topicId) {
       this.vectorStoreCache.delete(topicId);
-      this.logger.debug('Cache cleared for topic', { topicId });
+      this.logger.debug("Cache cleared for topic", { topicId });
     } else {
       this.vectorStoreCache.clear();
-      this.logger.debug('All cache cleared');
+      this.logger.debug("All cache cleared");
     }
   }
 
@@ -541,7 +573,7 @@ export class TopicManager {
    * Refresh topics from disk
    */
   public async refresh(): Promise<void> {
-    this.logger.info('Refreshing topics');
+    this.logger.info("Refreshing topics");
     await this.loadTopicsIndex();
   }
 
@@ -551,7 +583,10 @@ export class TopicManager {
    * Get the database directory path
    */
   private getDatabaseDir(): string {
-    return path.join(this.context.globalStorageUri.fsPath, EXTENSION.DATABASE_DIR);
+    return path.join(
+      this.context.globalStorageUri.fsPath,
+      EXTENSION.DATABASE_DIR
+    );
   }
 
   /**
@@ -578,18 +613,24 @@ export class TopicManager {
   private async loadTopicsIndex(): Promise<void> {
     try {
       const indexPath = this.getTopicsIndexPath();
-      const data = await fs.readFile(indexPath, 'utf-8');
+      const data = await fs.readFile(indexPath, "utf-8");
       this.topicsIndex = JSON.parse(data);
 
-      this.logger.info('Topics index loaded', {
+      this.logger.info("Topics index loaded", {
         topicCount: Object.keys(this.topicsIndex?.topics || {}).length,
       });
+
+      // Load document metadata for each topic
+      await this.loadAllTopicDocuments();
     } catch (error) {
       // File doesn't exist, create new index
-      this.logger.info('Topics index not found, creating new one');
+      this.logger.info("Topics index not found, creating new one");
 
       const config = vscode.workspace.getConfiguration(CONFIG.ROOT);
-      const embeddingModel = config.get<string>(CONFIG.EMBEDDING_MODEL, 'Xenova/all-MiniLM-L6-v2');
+      const embeddingModel = config.get<string>(
+        CONFIG.EMBEDDING_MODEL,
+        "Xenova/all-MiniLM-L6-v2"
+      );
 
       this.topicsIndex = {
         topics: {},
@@ -614,12 +655,12 @@ export class TopicManager {
       await fs.writeFile(
         indexPath,
         JSON.stringify(this.topicsIndex, null, 2),
-        'utf-8'
+        "utf-8"
       );
 
-      this.logger.debug('Topics index saved');
+      this.logger.debug("Topics index saved");
     } catch (error) {
-      this.logger.error('Failed to save topics index', {
+      this.logger.error("Failed to save topics index", {
         error: error instanceof Error ? error.message : String(error),
       });
       throw error;
@@ -643,18 +684,102 @@ export class TopicManager {
   /**
    * Map file extension to document file type
    */
-  private mapFileType(extension: string): 'pdf' | 'markdown' | 'html' {
+  private mapFileType(extension: string): "pdf" | "markdown" | "html" {
     switch (extension.toLowerCase()) {
-      case 'pdf':
-        return 'pdf';
-      case 'md':
-      case 'markdown':
-        return 'markdown';
-      case 'html':
-      case 'htm':
-        return 'html';
+      case "pdf":
+        return "pdf";
+      case "md":
+      case "markdown":
+        return "markdown";
+      case "html":
+      case "htm":
+        return "html";
       default:
-        return 'markdown'; // Default fallback
+        return "markdown"; // Default fallback
+    }
+  }
+
+  /**
+   * Get the file path for storing topic documents metadata
+   */
+  private getTopicDocumentsPath(topicId: string): string {
+    return path.join(this.getDatabaseDir(), `topic-${topicId}-documents.json`);
+  }
+
+  /**
+   * Save document metadata for a topic to disk
+   */
+  private async saveTopicDocuments(topicId: string): Promise<void> {
+    try {
+      const documents = this.topicDocuments.get(topicId);
+      if (!documents) {
+        return;
+      }
+
+      const documentsPath = this.getTopicDocumentsPath(topicId);
+      const documentsArray = Array.from(documents.values());
+
+      await fs.writeFile(
+        documentsPath,
+        JSON.stringify(documentsArray, null, 2),
+        "utf-8"
+      );
+
+      this.logger.debug("Topic documents saved", {
+        topicId,
+        documentCount: documentsArray.length,
+      });
+    } catch (error) {
+      this.logger.error("Failed to save topic documents", {
+        error: error instanceof Error ? error.message : String(error),
+        topicId,
+      });
+      throw error;
+    }
+  }
+
+  /**
+   * Load document metadata for a topic from disk
+   */
+  private async loadTopicDocuments(topicId: string): Promise<void> {
+    try {
+      const documentsPath = this.getTopicDocumentsPath(topicId);
+      const data = await fs.readFile(documentsPath, "utf-8");
+      const documentsArray: TopicDocument[] = JSON.parse(data);
+
+      const documentsMap = new Map<string, TopicDocument>();
+      for (const doc of documentsArray) {
+        documentsMap.set(doc.id, doc);
+      }
+
+      this.topicDocuments.set(topicId, documentsMap);
+
+      this.logger.debug("Topic documents loaded", {
+        topicId,
+        documentCount: documentsArray.length,
+      });
+    } catch (error) {
+      // File might not exist for older topics
+      this.logger.debug("No document metadata found for topic", { topicId });
+      this.topicDocuments.set(topicId, new Map());
+    }
+  }
+
+  /**
+   * Load document metadata for all topics
+   */
+  private async loadAllTopicDocuments(): Promise<void> {
+    if (!this.topicsIndex) {
+      return;
+    }
+
+    const topicIds = Object.keys(this.topicsIndex.topics);
+    this.logger.debug("Loading documents for all topics", {
+      topicCount: topicIds.length,
+    });
+
+    for (const topicId of topicIds) {
+      await this.loadTopicDocuments(topicId);
     }
   }
 }

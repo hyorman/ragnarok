@@ -327,7 +327,6 @@
     "package:all": "npm run package:win32-x64 && npm run package:win32-arm64 && npm run package:darwin-x64 && npm run package:darwin-arm64 && npm run package:linux-x64 && npm run package:linux-arm64",
     "pretest": "npm run compile && npm run compile:tests",
     "test": "node ./out/test/test/runTest.js",
-    "test:unit": "node ./out/test/test/runTest.js",
     "inspect:chunks": "npm run compile && node scripts/inspect-chunks.js",
     "clean": "rimraf out",
     "clean:test": "rimraf out/test"
@@ -355,7 +354,6 @@
     "@langchain/core": "^1.0.0",
     "@langchain/textsplitters": "^1.0.0",
     "async-mutex": "^0.5.0",
-    "ignore": "^5.3.2",
     "langchain": "^1.0.0"
   },
   "optionalDependencies": {
