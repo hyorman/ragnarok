@@ -10,7 +10,7 @@ import * as vscode from "vscode";
 import * as fs from "fs/promises";
 import * as path from "path";
 import { VectorStore } from "@langchain/core/vectorstores";
-import { Topic, TopicsIndex, Document as TopicDocument } from "../types";
+import { Topic, TopicsIndex, Document as TopicDocument } from "../utils/types";
 import {
   DocumentPipeline,
   PipelineOptions,
@@ -19,7 +19,7 @@ import {
 import { VectorStoreFactory } from "../stores/vectorStoreFactory";
 import { EmbeddingService } from "../embeddingService";
 import { Logger } from "../utils/logger";
-import { EXTENSION, CONFIG } from "../constants";
+import { EXTENSION, CONFIG } from "../utils/constants";
 
 export interface CreateTopicOptions {
   name: string;

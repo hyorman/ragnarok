@@ -18,7 +18,7 @@ import {
 import { ChatGeneration, ChatResult } from '@langchain/core/outputs';
 import { CallbackManagerForLLMRun } from '@langchain/core/callbacks/manager';
 import { Logger } from '../utils/logger';
-import { CONFIG } from '../constants';
+import { CONFIG } from '../utils/constants';
 
 export interface VSCodeLLMParams extends BaseChatModelParams {
   /** Model family to use (e.g., 'gpt-4o', 'gpt-3.5-turbo') */

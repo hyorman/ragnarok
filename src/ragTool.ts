@@ -7,9 +7,9 @@ import * as vscode from 'vscode';
 import { EmbeddingService } from './embeddingService';
 import { TopicManager } from './managers/topicManager';
 import { RAGAgent } from './agents/ragAgent';
-import { RAGQueryParams, RAGQueryResult } from './types';
-import { TOOLS, CONFIG } from './constants';
-import { WorkspaceContextProvider } from './workspaceContext';
+import { RAGQueryParams, RAGQueryResult } from './utils/types';
+import { TOOLS, CONFIG } from './utils/constants';
+import { WorkspaceContextProvider } from './utils/workspaceContext';
 import { Logger } from './utils/logger';
 
 const logger = new Logger('RAGTool');

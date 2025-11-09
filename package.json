@@ -170,6 +170,12 @@
         "icon": "$(file-directory-create)"
       },
       {
+        "command": "ragnarok.addGithubRepo",
+        "title": "Add Git Repository to Topic",
+        "category": "RAG",
+        "icon": "$(github)"
+      },
+      {
         "command": "ragnarok.refreshTopics",
         "title": "Refresh Topics",
         "category": "RAG",
@@ -184,6 +190,23 @@
         "command": "ragnarok.clearDatabase",
         "title": "Clear Database",
         "category": "RAG"
+      },
+      {
+        "command": "ragnarok.addGithubToken",
+        "title": "Add GitHub Token",
+        "category": "RAG",
+        "icon": "$(key)"
+      },
+      {
+        "command": "ragnarok.listGithubTokens",
+        "title": "List GitHub Tokens",
+        "category": "RAG"
+      },
+      {
+        "command": "ragnarok.removeGithubToken",
+        "title": "Remove GitHub Token",
+        "category": "RAG",
+        "icon": "$(trash)"
       }
     ],
     "viewsContainers": {
@@ -230,9 +253,14 @@
           "group": "inline@1"
         },
         {
-          "command": "ragnarok.deleteTopic",
+          "command": "ragnarok.addGithubRepo",
           "when": "view == ragTopics && viewItem == topic",
           "group": "inline@2"
+        },
+        {
+          "command": "ragnarok.deleteTopic",
+          "when": "view == ragTopics && viewItem == topic",
+          "group": "inline@3"
         }
       ]
     },

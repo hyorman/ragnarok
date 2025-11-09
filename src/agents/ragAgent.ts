@@ -12,7 +12,7 @@ import { Document as LangChainDocument } from '@langchain/core/documents';
 import { QueryPlannerAgent, QueryPlan, SubQuery } from './queryPlannerAgent';
 import { HybridRetriever, HybridSearchResult } from '../retrievers/hybridRetriever';
 import { Logger } from '../utils/logger';
-import { CONFIG } from '../constants';
+import { CONFIG } from '../utils/constants';
 
 export interface RAGAgentOptions {
   /** Topic name for context */
