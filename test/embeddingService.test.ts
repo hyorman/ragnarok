@@ -4,7 +4,7 @@
  */
 
 import { expect } from 'chai';
-import { EmbeddingService } from '../src/embeddingService';
+import { EmbeddingService } from '../src/embeddings/embeddingService';
 
 // Mock vscode module
 const mockVscode = {

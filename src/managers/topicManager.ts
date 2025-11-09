@@ -1,0 +1,775 @@
+/**
+ * Topic Manager - Manages topic lifecycle and vector stores
+ * Handles creation, deletion, updates, and document ingestion
+ *
+ * Architecture: Singleton pattern with integrated pipeline
+ * Replaces manual topic management from vectorDatabase.ts
+ */
+
+import * as vscode from "vscode";
+import * as fs from "fs/promises";
+import * as path from "path";
+import { VectorStore } from "@langchain/core/vectorstores";
+import { Topic, TopicsIndex, Document as TopicDocument } from "../utils/types";
+import {
+  DocumentPipeline,
+  PipelineOptions,
+  PipelineResult,
+} from "./documentPipeline";
+import { VectorStoreFactory } from "../stores/vectorStoreFactory";
+import { EmbeddingService } from "../embeddings/embeddingService";
+import { TransformersEmbeddings } from "../embeddings/langchainEmbeddings";
+import { Logger } from "../utils/logger";
+import { EXTENSION, CONFIG } from "../utils/constants";
+
+export interface CreateTopicOptions {
+  name: string;
+  description?: string;
+  embeddingModel?: string;
+  initialDocuments?: string[];
+}
+
+export interface TopicStats {
+  documentCount: number;
+  chunkCount: number;
+  lastUpdated: number;
+  embeddingModel: string;
+}
+
+export interface AddDocumentResult {
+  topic: Topic;
+  document: TopicDocument;
+  pipelineResult: PipelineResult;
+}
+
+/**
+ * Manages all topic operations and vector stores
+ */
+export class TopicManager {
+  private static instance: TopicManager;
+  private static initPromise: Promise<void> | null = null;
+  private context: vscode.ExtensionContext;
+  private logger: Logger;
+  private topicsIndex: TopicsIndex | null = null;
+  private documentPipeline: DocumentPipeline;
+  private vectorStoreFactory: VectorStoreFactory | null = null;
+  private embeddingService: EmbeddingService;
+  private isInitialized: boolean = false;
+
+  // Cache for loaded vector stores
+  private vectorStoreCache: Map<string, VectorStore> = new Map();
+
+  // Cache for topic documents
+  private topicDocuments: Map<string, Map<string, TopicDocument>> = new Map();
+
+  private constructor(context: vscode.ExtensionContext) {
+    this.context = context;
+    this.logger = new Logger("TopicManager");
+    this.documentPipeline = new DocumentPipeline();
+    this.embeddingService = EmbeddingService.getInstance();
+
+    this.logger.info("TopicManager created");
+  }
+
+  public static async getInstance(
+    context?: vscode.ExtensionContext
+  ): Promise<TopicManager> {
+    if (!TopicManager.instance) {
+      if (!context) {
+        throw new Error(
+          "TopicManager not initialized. Context required for first call."
+        );
+      }
+      TopicManager.instance = new TopicManager(context);
+      // Automatically initialize on first getInstance call
+      TopicManager.initPromise = TopicManager.instance.init();
+    }
+
+    // Wait for initialization to complete
+    if (TopicManager.initPromise) {
+      await TopicManager.initPromise;
+      TopicManager.initPromise = null;
+    }
+
+    return TopicManager.instance;
+  }
+
+  /**
+   * Initialize the manager and load topics index
+   */
+  private async init(): Promise<void> {
+    if (this.isInitialized) {
+      this.logger.info("TopicManager already initialized, skipping");
+      return;
+    }
+
+    this.logger.info("Initializing TopicManager");
+
+    try {
+      // Ensure storage directory exists
+      await this.ensureStorageDirectory();
+
+      // Load topics index
+      await this.loadTopicsIndex();
+
+      // Get embedding model from config
+      const config = vscode.workspace.getConfiguration(CONFIG.ROOT);
+      const embeddingModel = config.get<string>(
+        CONFIG.EMBEDDING_MODEL,
+        "Xenova/all-MiniLM-L6-v2"
+      );
+
+      // Initialize document pipeline
+      const storageDir = this.getDatabaseDir();
+      await this.documentPipeline.initialize(storageDir, embeddingModel);
+
+      // Create LangChain-compatible embeddings wrapper
+      const embeddings = new TransformersEmbeddings({ modelName: embeddingModel });
+
+      this.vectorStoreFactory = new VectorStoreFactory(
+        embeddings,
+        storageDir,
+        embeddingModel
+      );
+
+      this.isInitialized = true;
+      this.logger.info("TopicManager initialized successfully", {
+        topicCount: Object.keys(this.topicsIndex?.topics || {}).length,
+        embeddingModel,
+      });
+    } catch (error) {
+      this.logger.error("Failed to initialize TopicManager", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
+    }
+  }
+
+  /**
+   * Create a new topic
+   */
+  public async createTopic(options: CreateTopicOptions): Promise<Topic> {
+    this.logger.info("Creating topic", { name: options.name });
+
+    try {
+      // Ensure initialized
+      if (!this.topicsIndex) {
+        throw new Error("TopicManager not initialized");
+      }
+
+      // Check for duplicate names
+      const existingTopic = Object.values(this.topicsIndex.topics).find(
+        (t) => t.name.toLowerCase() === options.name.toLowerCase()
+      );
+
+      if (existingTopic) {
+        throw new Error(`Topic with name "${options.name}" already exists`);
+      }
+
+      // Create topic object
+      const topic: Topic = {
+        id: this.generateTopicId(),
+        name: options.name,
+        description: options.description,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        documentCount: 0,
+      };
+
+      // Add to index
+      this.topicsIndex.topics[topic.id] = topic;
+      this.topicsIndex.lastUpdated = Date.now();
+
+      // Update embedding model if specified
+      if (options.embeddingModel) {
+        this.topicsIndex.modelName = options.embeddingModel;
+      }
+
+      // Save index
+      await this.saveTopicsIndex();
+
+      // Initialize document map for this topic
+      this.topicDocuments.set(topic.id, new Map());
+
+      // Add initial documents if provided
+      if (options.initialDocuments && options.initialDocuments.length > 0) {
+        this.logger.info("Adding initial documents to topic", {
+          topicId: topic.id,
+          documentCount: options.initialDocuments.length,
+        });
+
+        await this.addDocuments(topic.id, options.initialDocuments);
+      }
+
+      this.logger.info("Topic created successfully", {
+        topicId: topic.id,
+        name: topic.name,
+      });
+
+      return topic;
+    } catch (error) {
+      this.logger.error("Failed to create topic", {
+        error: error instanceof Error ? error.message : String(error),
+        name: options.name,
+      });
+      throw error;
+    }
+  }
+
+  /**
+   * Delete a topic and its vector store
+   */
+  public async deleteTopic(topicId: string): Promise<void> {
+    this.logger.info("Deleting topic", { topicId });
+
+    try {
+      if (!this.topicsIndex || !this.vectorStoreFactory) {
+        throw new Error("TopicManager not initialized");
+      }
+
+      // Check if topic exists
+      if (!this.topicsIndex.topics[topicId]) {
+        throw new Error(`Topic not found: ${topicId}`);
+      }
+
+      const topicName = this.topicsIndex.topics[topicId].name;
+
+      // Delete vector store
+      await this.vectorStoreFactory.deleteStore(topicId);
+
+      // Remove from cache
+      this.vectorStoreCache.delete(topicId);
+      this.topicDocuments.delete(topicId);
+
+      // Delete document metadata file
+      try {
+        const documentsPath = this.getTopicDocumentsPath(topicId);
+        await fs.unlink(documentsPath);
+      } catch {
+        // File might not exist
+      }
+
+      // Remove from index
+      delete this.topicsIndex.topics[topicId];
+      this.topicsIndex.lastUpdated = Date.now();
+
+      // Save index
+      await this.saveTopicsIndex();
+
+      this.logger.info("Topic deleted successfully", { topicId, topicName });
+    } catch (error) {
+      this.logger.error("Failed to delete topic", {
+        error: error instanceof Error ? error.message : String(error),
+        topicId,
+      });
+      throw error;
+    }
+  }
+
+  /**
+   * Update topic metadata
+   */
+  public async updateTopic(
+    topicId: string,
+    updates: Partial<Pick<Topic, "name" | "description">>
+  ): Promise<Topic> {
+    this.logger.info("Updating topic", { topicId, updates });
+
+    try {
+      if (!this.topicsIndex) {
+        throw new Error("TopicManager not initialized");
+      }
+
+      const topic = this.topicsIndex.topics[topicId];
+      if (!topic) {
+        throw new Error(`Topic not found: ${topicId}`);
+      }
+
+      // Check for name conflicts if renaming
+      if (updates.name && updates.name !== topic.name) {
+        const existingTopic = Object.values(this.topicsIndex.topics).find(
+          (t) =>
+            t.id !== topicId &&
+            t.name.toLowerCase() === updates.name!.toLowerCase()
+        );
+
+        if (existingTopic) {
+          throw new Error(`Topic with name "${updates.name}" already exists`);
+        }
+      }
+
+      // Apply updates
+      if (updates.name) topic.name = updates.name;
+      if (updates.description !== undefined)
+        topic.description = updates.description;
+      topic.updatedAt = Date.now();
+
+      // Save index
+      this.topicsIndex.lastUpdated = Date.now();
+      await this.saveTopicsIndex();
+
+      this.logger.info("Topic updated successfully", { topicId });
+
+      return topic;
+    } catch (error) {
+      this.logger.error("Failed to update topic", {
+        error: error instanceof Error ? error.message : String(error),
+        topicId,
+      });
+      throw error;
+    }
+  }
+
+  /**
+   * Get a topic by ID
+   */
+  public getTopic(topicId: string): Topic | null {
+    if (!this.topicsIndex) {
+      return null;
+    }
+    return this.topicsIndex.topics[topicId] || null;
+  }
+
+  /**
+   * Get all topics
+   */
+  public getAllTopics(): Topic[] {
+    if (!this.topicsIndex) {
+      return [];
+    }
+    return Object.values(this.topicsIndex.topics);
+  }
+
+  /**
+   * Get documents for a specific topic
+   */
+  public getTopicDocuments(topicId: string): TopicDocument[] {
+    const documents = this.topicDocuments.get(topicId);
+    if (!documents) {
+      return [];
+    }
+    return Array.from(documents.values());
+  }
+
+  /**
+   * Add documents to a topic
+   */
+  public async addDocuments(
+    topicId: string,
+    filePaths: string[],
+    options?: PipelineOptions
+  ): Promise<AddDocumentResult[]> {
+    this.logger.info("Adding documents to topic", {
+      topicId,
+      documentCount: filePaths.length,
+    });
+
+    try {
+      if (!this.topicsIndex) {
+        throw new Error("TopicManager not initialized");
+      }
+
+      const topic = this.topicsIndex.topics[topicId];
+      if (!topic) {
+        throw new Error(`Topic not found: ${topicId}`);
+      }
+
+      const results: AddDocumentResult[] = [];
+
+      // Process each document
+      for (const filePath of filePaths) {
+        try {
+          // Process document through pipeline
+          const pipelineResult = await this.documentPipeline.processDocument(
+            filePath,
+            topicId,
+            options
+          );
+
+          if (!pipelineResult.success) {
+            this.logger.warn("Document processing failed", {
+              filePath,
+              errors: pipelineResult.errors,
+            });
+            continue;
+          }
+
+          // Create document metadata
+          const fileName = path.basename(filePath);
+          const fileExt = path.extname(filePath).substring(1);
+
+          const document: TopicDocument = {
+            id: this.generateDocumentId(),
+            topicId,
+            name: fileName,
+            filePath,
+            fileType: this.mapFileType(fileExt),
+            addedAt: Date.now(),
+            chunkCount: pipelineResult.metadata.chunksStored,
+          };
+
+          // Store document metadata
+          if (!this.topicDocuments.has(topicId)) {
+            this.topicDocuments.set(topicId, new Map());
+          }
+          this.topicDocuments.get(topicId)!.set(document.id, document);
+
+          results.push({
+            topic,
+            document,
+            pipelineResult,
+          });
+
+          this.logger.info("Document added successfully", {
+            topicId,
+            documentId: document.id,
+            fileName,
+            chunkCount: document.chunkCount,
+          });
+        } catch (error) {
+          this.logger.error("Failed to add document", {
+            error: error instanceof Error ? error.message : String(error),
+            filePath,
+          });
+          // Continue with other documents
+        }
+      }
+
+      // Update topic document count
+      topic.documentCount = this.topicDocuments.get(topicId)?.size || 0;
+      topic.updatedAt = Date.now();
+      this.topicsIndex.lastUpdated = Date.now();
+      await this.saveTopicsIndex();
+
+      // Persist document metadata to disk
+      await this.saveTopicDocuments(topicId);
+
+      this.logger.info("Documents added to topic", {
+        topicId,
+        successCount: results.length,
+        totalCount: filePaths.length,
+      });
+
+      return results;
+    } catch (error) {
+      this.logger.error("Failed to add documents", {
+        error: error instanceof Error ? error.message : String(error),
+        topicId,
+      });
+      throw error;
+    }
+  }
+
+  /**
+   * Get vector store for a topic
+   */
+  public async getVectorStore(topicId: string): Promise<VectorStore | null> {
+    this.logger.debug("Getting vector store", { topicId });
+
+    try {
+      if (!this.vectorStoreFactory) {
+        throw new Error("TopicManager not initialized");
+      }
+
+      // Check cache first
+      const cachedStore = this.vectorStoreCache.get(topicId);
+      if (cachedStore) {
+        this.logger.debug("Returning cached vector store", { topicId });
+        return cachedStore;
+      }
+
+      // Load from disk
+      const store = await this.vectorStoreFactory.loadStore(topicId);
+
+      if (store) {
+        this.vectorStoreCache.set(topicId, store);
+        this.logger.debug("Vector store loaded and cached", { topicId });
+      }
+
+      return store;
+    } catch (error) {
+      this.logger.error("Failed to get vector store", {
+        error: error instanceof Error ? error.message : String(error),
+        topicId,
+      });
+      return null;
+    }
+  }
+
+  /**
+   * Get statistics for a topic
+   */
+  public async getTopicStats(topicId: string): Promise<TopicStats | null> {
+    this.logger.debug("Getting topic stats", { topicId });
+
+    try {
+      if (!this.topicsIndex || !this.vectorStoreFactory) {
+        return null;
+      }
+
+      const topic = this.topicsIndex.topics[topicId];
+      if (!topic) {
+        return null;
+      }
+
+      // Get document count
+      const documentCount = this.topicDocuments.get(topicId)?.size || 0;
+
+      // Load vector store metadata
+      const metadataPath = path.join(
+        this.getDatabaseDir(),
+        `vector-${topicId}-metadata.json`
+      );
+
+      let chunkCount = 0;
+
+      try {
+        const metadataJson = await fs.readFile(metadataPath, "utf-8");
+        const metadata = JSON.parse(metadataJson);
+        chunkCount = metadata.chunkCount || 0;
+      } catch {
+        // Metadata not available
+      }
+
+      return {
+        documentCount,
+        chunkCount,
+        lastUpdated: topic.updatedAt,
+        embeddingModel: this.topicsIndex.modelName,
+      };
+    } catch (error) {
+      this.logger.error("Failed to get topic stats", {
+        error: error instanceof Error ? error.message : String(error),
+        topicId,
+      });
+      return null;
+    }
+  }
+
+  /**
+   * Clear vector store cache
+   */
+  public clearCache(topicId?: string): void {
+    if (topicId) {
+      this.vectorStoreCache.delete(topicId);
+      this.logger.debug("Cache cleared for topic", { topicId });
+    } else {
+      this.vectorStoreCache.clear();
+      this.logger.debug("All cache cleared");
+    }
+  }
+
+  /**
+   * Refresh topics from disk
+   */
+  public async refresh(): Promise<void> {
+    this.logger.info("Refreshing topics");
+    await this.loadTopicsIndex();
+  }
+
+  // ==================== Private Methods ====================
+
+  /**
+   * Get the database directory path
+   */
+  private getDatabaseDir(): string {
+    return path.join(
+      this.context.globalStorageUri.fsPath,
+      EXTENSION.DATABASE_DIR
+    );
+  }
+
+  /**
+   * Get the topics index file path
+   */
+  private getTopicsIndexPath(): string {
+    return path.join(this.getDatabaseDir(), EXTENSION.TOPICS_INDEX_FILENAME);
+  }
+
+  /**
+   * Ensure storage directory exists
+   */
+  private async ensureStorageDirectory(): Promise<void> {
+    try {
+      await fs.mkdir(this.getDatabaseDir(), { recursive: true });
+    } catch (error) {
+      // Directory might already exist
+    }
+  }
+
+  /**
+   * Load topics index from file
+   */
+  private async loadTopicsIndex(): Promise<void> {
+    try {
+      const indexPath = this.getTopicsIndexPath();
+      const data = await fs.readFile(indexPath, "utf-8");
+      this.topicsIndex = JSON.parse(data);
+
+      this.logger.info("Topics index loaded", {
+        topicCount: Object.keys(this.topicsIndex?.topics || {}).length,
+      });
+
+      // Load document metadata for each topic
+      await this.loadAllTopicDocuments();
+    } catch (error) {
+      // File doesn't exist, create new index
+      this.logger.info("Topics index not found, creating new one");
+
+      const config = vscode.workspace.getConfiguration(CONFIG.ROOT);
+      const embeddingModel = config.get<string>(
+        CONFIG.EMBEDDING_MODEL,
+        "Xenova/all-MiniLM-L6-v2"
+      );
+
+      this.topicsIndex = {
+        topics: {},
+        modelName: embeddingModel,
+        lastUpdated: Date.now(),
+      };
+
+      await this.saveTopicsIndex();
+    }
+  }
+
+  /**
+   * Save topics index to file
+   */
+  private async saveTopicsIndex(): Promise<void> {
+    if (!this.topicsIndex) {
+      return;
+    }
+
+    try {
+      const indexPath = this.getTopicsIndexPath();
+      await fs.writeFile(
+        indexPath,
+        JSON.stringify(this.topicsIndex, null, 2),
+        "utf-8"
+      );
+
+      this.logger.debug("Topics index saved");
+    } catch (error) {
+      this.logger.error("Failed to save topics index", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
+    }
+  }
+
+  /**
+   * Generate a unique topic ID
+   */
+  private generateTopicId(): string {
+    return `topic-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+  }
+
+  /**
+   * Generate a unique document ID
+   */
+  private generateDocumentId(): string {
+    return `doc-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+  }
+
+  /**
+   * Map file extension to document file type
+   */
+  private mapFileType(extension: string): "pdf" | "markdown" | "html" {
+    switch (extension.toLowerCase()) {
+      case "pdf":
+        return "pdf";
+      case "md":
+      case "markdown":
+        return "markdown";
+      case "html":
+      case "htm":
+        return "html";
+      default:
+        return "markdown"; // Default fallback
+    }
+  }
+
+  /**
+   * Get the file path for storing topic documents metadata
+   */
+  private getTopicDocumentsPath(topicId: string): string {
+    return path.join(this.getDatabaseDir(), `topic-${topicId}-documents.json`);
+  }
+
+  /**
+   * Save document metadata for a topic to disk
+   */
+  private async saveTopicDocuments(topicId: string): Promise<void> {
+    try {
+      const documents = this.topicDocuments.get(topicId);
+      if (!documents) {
+        return;
+      }
+
+      const documentsPath = this.getTopicDocumentsPath(topicId);
+      const documentsArray = Array.from(documents.values());
+
+      await fs.writeFile(
+        documentsPath,
+        JSON.stringify(documentsArray, null, 2),
+        "utf-8"
+      );
+
+      this.logger.debug("Topic documents saved", {
+        topicId,
+        documentCount: documentsArray.length,
+      });
+    } catch (error) {
+      this.logger.error("Failed to save topic documents", {
+        error: error instanceof Error ? error.message : String(error),
+        topicId,
+      });
+      throw error;
+    }
+  }
+
+  /**
+   * Load document metadata for a topic from disk
+   */
+  private async loadTopicDocuments(topicId: string): Promise<void> {
+    try {
+      const documentsPath = this.getTopicDocumentsPath(topicId);
+      const data = await fs.readFile(documentsPath, "utf-8");
+      const documentsArray: TopicDocument[] = JSON.parse(data);
+
+      const documentsMap = new Map<string, TopicDocument>();
+      for (const doc of documentsArray) {
+        documentsMap.set(doc.id, doc);
+      }
+
+      this.topicDocuments.set(topicId, documentsMap);
+
+      this.logger.debug("Topic documents loaded", {
+        topicId,
+        documentCount: documentsArray.length,
+      });
+    } catch (error) {
+      // File might not exist for older topics
+      this.logger.debug("No document metadata found for topic", { topicId });
+      this.topicDocuments.set(topicId, new Map());
+    }
+  }
+
+  /**
+   * Load document metadata for all topics
+   */
+  private async loadAllTopicDocuments(): Promise<void> {
+    if (!this.topicsIndex) {
+      return;
+    }
+
+    const topicIds = Object.keys(this.topicsIndex.topics);
+    this.logger.debug("Loading documents for all topics", {
+      topicCount: topicIds.length,
+    });
+
+    for (const topicId of topicIds) {
+      await this.loadTopicDocuments(topicId);
+    }
+  }
+}
