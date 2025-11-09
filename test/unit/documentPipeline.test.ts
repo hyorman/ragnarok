@@ -259,40 +259,17 @@ describe("DocumentPipeline", function () {
       );
     });
 
-    it("should use memory vector store by default", async function () {
+    it("should use Chroma vector store", async function () {
       const testFile = path.join(fixturesPath, "sample-text.txt");
 
       const result = await pipeline.processDocument(
         testFile,
-        "test-topic-memory",
-        {
-          vectorStoreType: "memory",
-        }
+        "test-topic-chroma",
+        {}
       );
 
       expect(result.success).to.be.true;
       expect(result.stages.storing).to.be.true;
-    });
-
-    it("should support FAISS vector store (if available)", async function () {
-      const testFile = path.join(fixturesPath, "sample-text.txt");
-
-      try {
-        const result = await pipeline.processDocument(
-          testFile,
-          "test-topic-faiss",
-          {
-            vectorStoreType: "faiss",
-          }
-        );
-
-        expect(result.success).to.be.true;
-        expect(result.stages.storing).to.be.true;
-      } catch (error) {
-        // FAISS might not be available - that's okay
-        console.log("FAISS not available, skipping");
-        this.skip();
-      }
     });
   });
 

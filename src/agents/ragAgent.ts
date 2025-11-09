@@ -11,8 +11,11 @@ import { VectorStore } from '@langchain/core/vectorstores';
 import { Document as LangChainDocument } from '@langchain/core/documents';
 import { QueryPlannerAgent, QueryPlan, SubQuery } from './queryPlannerAgent';
 import { HybridRetriever, HybridSearchResult } from '../retrievers/hybridRetriever';
+import { EnsembleRetrieverWrapper, EnsembleSearchResult } from '../retrievers/ensembleRetriever';
+import { BM25RetrieverWrapper, BM25SearchResult } from '../retrievers/bm25Retriever';
 import { Logger } from '../utils/logger';
 import { CONFIG } from '../utils/constants';
+import { RetrievalStrategy } from '../utils/types';
 
 export interface RAGAgentOptions {
   /** Topic name for context */
@@ -34,7 +37,7 @@ export interface RAGAgentOptions {
   useLLM?: boolean;
 
   /** Retrieval strategy */
-  retrievalStrategy?: 'vector' | 'hybrid';
+  retrievalStrategy?: RetrievalStrategy;
 
   /** Default topK */
   topK?: number;
@@ -43,7 +46,7 @@ export interface RAGAgentOptions {
 export interface RetrievalResult {
   document: LangChainDocument;
   score: number;
-  source: 'vector' | 'hybrid' | 'keyword';
+  source: RetrievalStrategy | 'keyword';
   subQuery?: string;
   explanation?: string;
 }
@@ -86,53 +89,23 @@ export class RAGAgent {
   private logger: Logger;
   private queryPlanner: QueryPlannerAgent;
   private retriever: HybridRetriever | null = null;
+  private ensembleRetriever: EnsembleRetrieverWrapper | null = null;
+  private bm25Retriever: BM25RetrieverWrapper | null = null;
   private vectorStore: VectorStore | null = null;
-
-  // Configuration from VS Code settings
-  private enableIterativeRefinement: boolean;
-  private maxIterations: number;
-  private confidenceThreshold: number;
-  private retrievalStrategy: 'vector' | 'hybrid';
-  private useLLM: boolean;
 
   constructor() {
     this.logger = new Logger('RAGAgent');
     this.queryPlanner = new QueryPlannerAgent();
-
-    // Load configuration
-    const config = vscode.workspace.getConfiguration(CONFIG.ROOT);
-    this.enableIterativeRefinement = config.get<boolean>(
-      CONFIG.AGENTIC_ITERATIVE_REFINEMENT,
-      true
-    );
-    this.maxIterations = config.get<number>(CONFIG.AGENTIC_MAX_ITERATIONS, 3);
-    this.confidenceThreshold = config.get<number>(
-      CONFIG.AGENTIC_CONFIDENCE_THRESHOLD,
-      0.7
-    );
-    this.retrievalStrategy = config.get<string>(
-      CONFIG.AGENTIC_RETRIEVAL_STRATEGY,
-      'hybrid'
-    ) as 'vector' | 'hybrid';
-    this.useLLM = config.get<boolean>(CONFIG.AGENTIC_USE_LLM, true);
-
-    this.logger.info('RAGAgent initialized', {
-      enableIterativeRefinement: this.enableIterativeRefinement,
-      maxIterations: this.maxIterations,
-      confidenceThreshold: this.confidenceThreshold,
-      retrievalStrategy: this.retrievalStrategy,
-      useLLM: this.useLLM,
-    });
+    this.logger.info('RAGAgent initialized');
   }
 
   /**
    * Initialize agent with vector store
    */
-  public async initialize(vectorStore: VectorStore): Promise<void> {
+  public async initialize(vectorStore: VectorStore, documents?: LangChainDocument[]): Promise<void> {
     this.logger.info('Initializing RAGAgent with vector store');
 
     this.vectorStore = vectorStore;
-    this.retriever = new HybridRetriever(vectorStore);
 
     this.logger.info('RAGAgent initialized successfully');
   }
@@ -153,7 +126,7 @@ export class RAGAgent {
 
     try {
       // Ensure initialized
-      if (!this.retriever || !this.vectorStore) {
+      if (!this.vectorStore) {
         throw new Error('RAGAgent not initialized. Call initialize() first.');
       }
 
@@ -241,25 +214,38 @@ export class RAGAgent {
    */
   public async simpleQuery(
     query: string,
-    topK: number = 5
+    topK: number = 5,
+    strategy: RetrievalStrategy = RetrievalStrategy.HYBRID
   ): Promise<RetrievalResult[]> {
-    this.logger.debug('Executing simple query', { query, topK });
+    this.logger.debug('Executing simple query', { query, topK, strategy });
 
-    if (!this.retriever) {
+    if (!this.vectorStore) {
       throw new Error('RAGAgent not initialized');
     }
 
     try {
-      const searchResults =
-        this.retrievalStrategy === 'hybrid'
-          ? await this.retriever.search(query, { k: topK })
-          : await this.retriever.vectorSearch(query, topK);
+      // Initialize retrievers on-demand based on strategy
+      await this.initializeRetrieversForStrategy(strategy);
+
+      let searchResults: Array<HybridSearchResult | EnsembleSearchResult | BM25SearchResult>;
+
+      if (strategy === RetrievalStrategy.BM25 && this.bm25Retriever) {
+        searchResults = await this.bm25Retriever.search(query, { k: topK });
+      } else if (strategy === RetrievalStrategy.ENSEMBLE && this.ensembleRetriever) {
+        searchResults = await this.ensembleRetriever.search(query, { k: topK });
+      } else if (strategy === RetrievalStrategy.HYBRID && this.retriever) {
+        searchResults = await this.retriever.search(query, { k: topK });
+      } else if (strategy === RetrievalStrategy.VECTOR && this.retriever) {
+        searchResults = await this.retriever.vectorSearch(query, topK);
+      } else {
+        throw new Error(`Retriever for strategy ${strategy} not initialized`);
+      }
 
       return searchResults.map((result) => ({
         document: result.document,
-        score: result.score,
-        source: this.retrievalStrategy,
-        explanation: result.explanation,
+        score: result.score || 0,
+        source: strategy,
+        explanation: 'explanation' in result ? result.explanation : undefined,
       }));
     } catch (error) {
       this.logger.error('Simple query failed', {
@@ -272,17 +258,64 @@ export class RAGAgent {
   // ==================== Private Methods ====================
 
   /**
+   * Initialize retrievers on-demand based on strategy
+   */
+  private async initializeRetrieversForStrategy(strategy: RetrievalStrategy): Promise<void> {
+    if (!this.vectorStore) {
+      throw new Error('Vector store not initialized');
+    }
+
+    // Initialize hybrid retriever if needed (for HYBRID and VECTOR strategies)
+    if ((strategy === RetrievalStrategy.HYBRID || strategy === RetrievalStrategy.VECTOR) && !this.retriever) {
+      this.logger.info('Initializing HybridRetriever on-demand');
+      this.retriever = new HybridRetriever(this.vectorStore);
+    }
+
+    // Initialize ensemble retriever if needed
+    if (strategy === RetrievalStrategy.ENSEMBLE && !this.ensembleRetriever) {
+      this.logger.info('Initializing EnsembleRetriever on-demand');
+      this.ensembleRetriever = new EnsembleRetrieverWrapper(this.vectorStore);
+      
+      try {
+        // Fetch documents from vector store for BM25
+        const allDocs = await this.vectorStore.similaritySearch('', 10000);
+        await this.ensembleRetriever.initialize(allDocs);
+        this.logger.info('EnsembleRetriever initialized successfully');
+      } catch (error) {
+        this.logger.error('Failed to initialize EnsembleRetriever', error);
+        throw new Error('Failed to initialize EnsembleRetriever for query');
+      }
+    }
+
+    // Initialize BM25 retriever if needed
+    if (strategy === RetrievalStrategy.BM25 && !this.bm25Retriever) {
+      this.logger.info('Initializing BM25Retriever on-demand');
+      this.bm25Retriever = new BM25RetrieverWrapper();
+      
+      try {
+        // Fetch documents from vector store
+        const allDocs = await this.vectorStore.similaritySearch('', 10000);
+        await this.bm25Retriever.initialize(allDocs);
+        this.logger.info('BM25Retriever initialized successfully');
+      } catch (error) {
+        this.logger.error('Failed to initialize BM25Retriever', error);
+        throw new Error('Failed to initialize BM25Retriever for query');
+      }
+    }
+  }
+
+  /**
    * Create query plan using QueryPlannerAgent
    */
   private async createQueryPlan(
     query: string,
-    options: RAGAgentOptions
+    options: Required<RAGAgentOptions>
   ): Promise<QueryPlan> {
     return await this.queryPlanner.createPlan(query, {
       topicName: options.topicName,
       workspaceContext: options.workspaceContext,
-      maxSubQueries: this.maxIterations,
-      defaultTopK: options.topK || 5,
+      maxSubQueries: options.maxIterations,
+      defaultTopK: options.topK,
       useLLM: options.useLLM,
     });
   }
@@ -292,7 +325,7 @@ export class RAGAgent {
    */
   private async executeRetrieval(
     plan: QueryPlan,
-    options: RAGAgentOptions
+    options: Required<RAGAgentOptions>
   ): Promise<RetrievalResult[]> {
     const allResults: RetrievalResult[] = [];
 
@@ -319,32 +352,46 @@ export class RAGAgent {
    */
   private async executeSubQuery(
     subQuery: SubQuery,
-    options: RAGAgentOptions
+    options: Required<RAGAgentOptions>
   ): Promise<RetrievalResult[]> {
-    if (!this.retriever) {
-      throw new Error('Retriever not initialized');
+    if (!this.vectorStore) {
+      throw new Error('Agent not initialized');
     }
 
-    const topK = subQuery.topK || options.topK || 5;
+    const topK = subQuery.topK || options.topK;
+    const strategy = options.retrievalStrategy;
 
     this.logger.debug('Executing sub-query', {
       query: subQuery.query,
       topK,
+      strategy,
       reasoning: subQuery.reasoning,
     });
 
     try {
-      const searchResults =
-        options.retrievalStrategy === 'hybrid'
-          ? await this.retriever.search(subQuery.query, { k: topK })
-          : await this.retriever.vectorSearch(subQuery.query, topK);
+      // Initialize retrievers on-demand
+      await this.initializeRetrieversForStrategy(strategy);
+
+      let searchResults: Array<HybridSearchResult | EnsembleSearchResult | BM25SearchResult>;
+
+      if (strategy === RetrievalStrategy.BM25 && this.bm25Retriever) {
+        searchResults = await this.bm25Retriever.search(subQuery.query, { k: topK });
+      } else if (strategy === RetrievalStrategy.ENSEMBLE && this.ensembleRetriever) {
+        searchResults = await this.ensembleRetriever.search(subQuery.query, { k: topK });
+      } else if (strategy === RetrievalStrategy.HYBRID && this.retriever) {
+        searchResults = await this.retriever.search(subQuery.query, { k: topK });
+      } else if (strategy === RetrievalStrategy.VECTOR && this.retriever) {
+        searchResults = await this.retriever.vectorSearch(subQuery.query, topK);
+      } else {
+        throw new Error(`Retriever for strategy ${strategy} not initialized`);
+      }
 
       return searchResults.map((result) => ({
         document: result.document,
-        score: result.score,
-        source: options.retrievalStrategy || 'hybrid',
+        score: result.score || 0,
+        source: strategy,
         subQuery: subQuery.query,
-        explanation: result.explanation,
+        explanation: 'explanation' in result ? result.explanation : undefined,
       }));
     } catch (error) {
       this.logger.error('Sub-query execution failed', {
@@ -360,7 +407,7 @@ export class RAGAgent {
    */
   private async iterativeRetrieval(
     initialPlan: QueryPlan,
-    options: RAGAgentOptions
+    options: Required<RAGAgentOptions>
   ): Promise<{
     results: RetrievalResult[];
     iterations: number;
@@ -370,8 +417,8 @@ export class RAGAgent {
     const allResults: RetrievalResult[] = [];
     let currentPlan = initialPlan;
     let iterations = 0;
-    const maxIter = options.maxIterations || this.maxIterations;
-    const threshold = options.confidenceThreshold || this.confidenceThreshold;
+    const maxIter = options.maxIterations;
+    const threshold = options.confidenceThreshold;
 
     this.logger.debug('Starting iterative retrieval', {
       maxIterations: maxIter,
@@ -481,19 +528,17 @@ export class RAGAgent {
   }
 
   /**
-   * Merge options with configuration
+   * Merge options with sensible defaults
    */
   private mergeOptions(options: RAGAgentOptions): Required<RAGAgentOptions> {
     return {
       topicName: options.topicName || '',
       workspaceContext: options.workspaceContext || '',
-      enableIterativeRefinement:
-        options.enableIterativeRefinement ?? this.enableIterativeRefinement,
-      maxIterations: options.maxIterations ?? this.maxIterations,
-      confidenceThreshold:
-        options.confidenceThreshold ?? this.confidenceThreshold,
-      useLLM: options.useLLM ?? this.useLLM,
-      retrievalStrategy: options.retrievalStrategy ?? this.retrievalStrategy,
+      enableIterativeRefinement: options.enableIterativeRefinement ?? true,
+      maxIterations: options.maxIterations ?? 3,
+      confidenceThreshold: options.confidenceThreshold ?? 0.7,
+      useLLM: options.useLLM ?? false,
+      retrievalStrategy: options.retrievalStrategy ?? RetrievalStrategy.HYBRID,
       topK: options.topK ?? 5,
     };
   }
@@ -503,26 +548,10 @@ export class RAGAgent {
    */
   public setVectorStore(vectorStore: VectorStore): void {
     this.vectorStore = vectorStore;
-    this.retriever = new HybridRetriever(vectorStore);
-    this.logger.debug('Vector store updated');
-  }
-
-  /**
-   * Get current configuration
-   */
-  public getConfig(): {
-    enableIterativeRefinement: boolean;
-    maxIterations: number;
-    confidenceThreshold: number;
-    retrievalStrategy: string;
-    useLLM: boolean;
-  } {
-    return {
-      enableIterativeRefinement: this.enableIterativeRefinement,
-      maxIterations: this.maxIterations,
-      confidenceThreshold: this.confidenceThreshold,
-      retrievalStrategy: this.retrievalStrategy,
-      useLLM: this.useLLM,
-    };
+    // Clear all retrievers - they'll be re-initialized on-demand with new vector store
+    this.retriever = null;
+    this.ensembleRetriever = null;
+    this.bm25Retriever = null;
+    this.logger.debug('Vector store updated, retrievers cleared');
   }
 }

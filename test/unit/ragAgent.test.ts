@@ -4,7 +4,8 @@
  */
 
 import { expect } from 'chai';
-import { RAGAgent, RAGAgentOptions, RetrievalResult } from '../../src/agents/ragAgent';
+import { RAGAgent } from '../../src/agents/ragAgent';
+import { RetrievalStrategy } from '../../src/utils/types';
 import { VectorStore } from '@langchain/core/vectorstores';
 import { Document as LangChainDocument } from '@langchain/core/documents';
 import { Embeddings } from '@langchain/core/embeddings';
@@ -104,18 +105,18 @@ describe('RAGAgent', function () {
       const newAgent = new RAGAgent();
       await newAgent.initialize(mockVectorStore);
 
-      const config = newAgent.getConfig();
-      expect(config).to.have.property('enableIterativeRefinement');
-      expect(config).to.have.property('maxIterations');
-      expect(config).to.have.property('confidenceThreshold');
+      // Verify the agent is properly initialized and can execute queries
+      expect(newAgent).to.be.an('object');
+      expect(newAgent).to.respondTo('simpleQuery');
+      expect(newAgent).to.respondTo('query');
     });
 
-    it('should load configuration from VS Code settings', function () {
-      const config = agent.getConfig();
+    it('should use configuration from query options', async function () {
+      // Configuration is passed as options, not stored in agent
+      const results = await agent.simpleQuery('test query', 3, RetrievalStrategy.VECTOR);
 
-      expect(config.maxIterations).to.be.a('number');
-      expect(config.confidenceThreshold).to.be.a('number');
-      expect(config.retrievalStrategy).to.be.oneOf(['vector', 'hybrid']);
+      expect(results).to.be.an('array');
+      expect(results.length).to.be.at.most(3);
     });
   });
 
@@ -248,10 +249,10 @@ describe('RAGAgent', function () {
     it('should accept retrieval strategy', async function () {
       const vectorResult = await agent.query('test', {
         useLLM: false,
-        retrievalStrategy: 'vector',
+        retrievalStrategy: RetrievalStrategy.VECTOR,
       });
 
-      expect(vectorResult.metadata.strategy).to.equal('vector');
+      expect(vectorResult.metadata.strategy).to.equal(RetrievalStrategy.VECTOR);
     });
 
     it('should respect topK parameter', async function () {
@@ -444,14 +445,17 @@ describe('RAGAgent', function () {
   });
 
   describe('Configuration Management', function () {
-    it('should get current configuration', function () {
-      const config = agent.getConfig();
+    it('should accept configuration via query options', async function () {
+      // Configuration is now passed as options to query methods
+      const result = await agent.query('test query', {
+        maxIterations: 2,
+        confidenceThreshold: 0.8,
+        retrievalStrategy: RetrievalStrategy.HYBRID,
+        useLLM: false,
+      });
 
-      expect(config).to.have.property('enableIterativeRefinement');
-      expect(config).to.have.property('maxIterations');
-      expect(config).to.have.property('confidenceThreshold');
-      expect(config).to.have.property('retrievalStrategy');
-      expect(config).to.have.property('useLLM');
+      expect(result).to.have.property('iterations');
+      expect(result).to.have.property('avgConfidence');
     });
 
     it('should allow updating vector store', function () {

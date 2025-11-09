@@ -7,13 +7,13 @@
  */
 
 import { Document as LangChainDocument } from "@langchain/core/documents";
-import { VectorStore } from "@langchain/core/vectorstores";
 import {
   DocumentLoaderFactory,
   LoaderOptions,
 } from "../loaders/documentLoaderFactory";
 import { SemanticChunker, ChunkingOptions } from "../splitters/semanticChunker";
-import { EmbeddingService } from "../embeddingService";
+import { EmbeddingService } from "../embeddings/embeddingService";
+import { TransformersEmbeddings } from "../embeddings/langchainEmbeddings";
 import { VectorStoreFactory } from "../stores/vectorStoreFactory";
 import { Logger } from "../utils/logger";
 
@@ -26,9 +26,6 @@ export interface PipelineOptions {
 
   /** Embedding model to use */
   embeddingModel?: string;
-
-  /** Vector store type preference */
-  vectorStoreType?: "memory" | "faiss";
 
   /** Batch size for embedding generation */
   embeddingBatchSize?: number;
@@ -116,18 +113,11 @@ export class DocumentPipeline {
         throw new Error("Failed to get current embedding model name");
       }
 
-      // Create vector store factory with a custom embeddings wrapper
-      const embeddingsWrapper = {
-        embedDocuments: async (texts: string[]) => {
-          return await this.embeddingService.embedBatch(texts);
-        },
-        embedQuery: async (text: string) => {
-          return await this.embeddingService.embed(text);
-        },
-      };
+      // Create LangChain-compatible embeddings wrapper
+      const embeddings = new TransformersEmbeddings({ modelName: actualModelName });
 
       this.vectorStoreFactory = new VectorStoreFactory(
-        embeddingsWrapper as any,
+        embeddings,
         storageDir,
         actualModelName
       );
@@ -401,10 +391,6 @@ export class DocumentPipeline {
       // Create new store (embeddings generated here via our wrapper)
       this.logger.debug("Creating new vector store", { topicId });
 
-      const storeType =
-        options.vectorStoreType ||
-        this.vectorStoreFactory.getRecommendedStoreType(chunks.length);
-
       this.reportProgress(options.onProgress, {
         stage: "storing",
         progress: 70,
@@ -413,7 +399,6 @@ export class DocumentPipeline {
 
       vectorStore = await this.vectorStoreFactory.createStore(
         {
-          type: storeType,
           topicId,
           storageDir: "", // Already set in factory
         },

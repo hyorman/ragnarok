@@ -2,6 +2,12 @@
  * Embedding service using Transformers.js for local sentence transformers
  * Refactored with async-mutex to prevent race conditions
  *
+ * Features:
+ * - Local embedding generation using HuggingFace Transformers.js
+ * - Multiple similarity metrics via LangChain (cosine, euclidean, inner product)
+ * - Cross-platform WASM backend for ONNX models
+ * - Batch processing with progress tracking
+ *
  * Note: @huggingface/transformers is dynamically imported because it's an ESM-only package
  * and VS Code extensions run in CommonJS mode. Dynamic import() allows us to load ESM packages
  * at runtime without TypeScript compilation errors.
@@ -9,8 +15,9 @@
 
 import * as vscode from 'vscode';
 import { Mutex } from 'async-mutex';
-import { CONFIG } from './utils/constants';
-import { Logger } from './utils/logger';
+import { cosineSimilarity as langchainCosineSimilarity, euclideanDistance, innerProduct } from '@langchain/core/utils/math';
+import { CONFIG } from '../utils/constants';
+import { Logger } from '../utils/logger';
 
 // Type definitions for the dynamically imported transformers module
 type TransformersModule = any; // Dynamic import type - resolved at runtime
@@ -294,25 +301,42 @@ export class EmbeddingService {
   }
 
   /**
-   * Calculate cosine similarity between two embeddings
+   * Calculate cosine similarity between two embeddings using LangChain's implementation
    */
   public cosineSimilarity(a: number[], b: number[]): number {
     if (a.length !== b.length) {
       throw new Error('Embeddings must have the same dimension');
     }
 
-    let dotProduct = 0;
-    let normA = 0;
-    let normB = 0;
+    // LangChain's cosineSimilarity works on matrices, so wrap vectors in arrays
+    const result = langchainCosineSimilarity([a], [b]);
+    return result[0][0];
+  }
 
-    for (let i = 0; i < a.length; i++) {
-      dotProduct += a[i] * b[i];
-      normA += a[i] * a[i];
-      normB += b[i] * b[i];
+  /**
+   * Calculate Euclidean distance between two embeddings using LangChain's implementation
+   */
+  public euclideanDistance(a: number[], b: number[]): number {
+    if (a.length !== b.length) {
+      throw new Error('Embeddings must have the same dimension');
     }
 
-    const similarity = dotProduct / (Math.sqrt(normA) * Math.sqrt(normB));
-    return similarity;
+    // LangChain's euclideanDistance works on matrices, so wrap vectors in arrays
+    const result = euclideanDistance([a], [b]);
+    return result[0][0];
+  }
+
+  /**
+   * Calculate inner product (dot product) between two embeddings using LangChain's implementation
+   */
+  public innerProduct(a: number[], b: number[]): number {
+    if (a.length !== b.length) {
+      throw new Error('Embeddings must have the same dimension');
+    }
+
+    // LangChain's innerProduct works on matrices, so wrap vectors in arrays
+    const result = innerProduct([a], [b]);
+    return result[0][0];
   }
 
   /**
