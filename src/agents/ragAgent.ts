@@ -9,7 +9,7 @@
 import * as vscode from 'vscode';
 import { VectorStore } from '@langchain/core/vectorstores';
 import { Document as LangChainDocument } from '@langchain/core/documents';
-import { QueryPlannerAgent, QueryPlan, SubQuery } from './queryPlannerAgent';
+import { QueryPlannerAgent, QueryPlan, SubQuery, RefinementContext } from './queryPlannerAgent';
 import { HybridRetriever, HybridSearchResult } from '../retrievers/hybridRetriever';
 import { EnsembleRetrieverWrapper, EnsembleSearchResult } from '../retrievers/ensembleRetriever';
 import { BM25RetrieverWrapper, BM25SearchResult } from '../retrievers/bm25Retriever';
@@ -275,7 +275,7 @@ export class RAGAgent {
     if (strategy === RetrievalStrategy.ENSEMBLE && !this.ensembleRetriever) {
       this.logger.info('Initializing EnsembleRetriever on-demand');
       this.ensembleRetriever = new EnsembleRetrieverWrapper(this.vectorStore);
-      
+
       try {
         // Fetch documents from vector store for BM25
         const allDocs = await this.vectorStore.similaritySearch('', 10000);
@@ -291,7 +291,7 @@ export class RAGAgent {
     if (strategy === RetrievalStrategy.BM25 && !this.bm25Retriever) {
       this.logger.info('Initializing BM25Retriever on-demand');
       this.bm25Retriever = new BM25RetrieverWrapper();
-      
+
       try {
         // Fetch documents from vector store
         const allDocs = await this.vectorStore.similaritySearch('', 10000);
@@ -466,9 +466,51 @@ export class RAGAgent {
       }
 
       // Refine query plan for next iteration
-      // (In a full implementation, this would use LLM to refine based on gaps)
-      // For now, we'll just stop after first iteration
-      break;
+      try {
+        // Build refinement context
+        const refinementContext = {
+          currentResults: allResults.map(r => ({
+            content: r.document.pageContent,
+            score: r.score,
+            metadata: r.document.metadata,
+          })),
+          executedQueries: currentPlan.subQueries.map(sq => sq.query),
+          avgConfidence,
+          uniqueDocCount: new Set(
+            allResults.map(r => r.document.metadata.chunkId || r.document.pageContent.substring(0, 50))
+          ).size,
+          confidenceThreshold: threshold,
+        };
+
+        // Use QueryPlannerAgent to refine the plan
+        const refinedPlan = await this.queryPlanner.refinePlan(
+          currentPlan,
+          refinementContext,
+          {
+            topicName: options.topicName,
+            workspaceContext: options.workspaceContext,
+            maxSubQueries: options.maxIterations,
+            defaultTopK: options.topK,
+            useLLM: options.useLLM,
+          }
+        );
+
+        if (!refinedPlan || refinedPlan.subQueries.length === 0) {
+          this.logger.info('No refinement needed, stopping iteration');
+          break;
+        }
+
+        this.logger.debug('Query plan refined', {
+          newSubQueries: refinedPlan.subQueries.length,
+        });
+
+        currentPlan = refinedPlan;
+      } catch (error) {
+        this.logger.error('Failed to refine query plan', {
+          error: error instanceof Error ? error.message : String(error),
+        });
+        break;
+      }
     }
 
     const avgConfidence = this.calculateAvgConfidence(allResults);
