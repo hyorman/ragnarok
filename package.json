@@ -60,22 +60,44 @@
           "minimum": 0,
           "maximum": 500
         },
-        "ragnarok.pdfStructureDetection": {
+        "ragnarok.logLevel": {
           "type": "string",
-          "default": "heuristic",
-          "description": "How to detect structure in PDF files",
+          "default": "info",
+          "description": "Logging verbosity level for the RAGnarōk output channel",
           "enum": [
-            "heuristic",
-            "none"
+            "debug",
+            "info",
+            "warn",
+            "error"
           ],
           "enumDescriptions": [
-            "Try to detect headings using heuristics (may be inaccurate)",
-            "Don't detect structure, use plain text chunking"
+            "Debug: Verbose logging for troubleshooting (most detailed)",
+            "Info: Standard informational messages (recommended)",
+            "Warn: Only warnings and errors",
+            "Error: Only error messages (least verbose)"
           ]
+        },
+        "ragnarok.retrievalStrategy": {
+          "type": "string",
+          "default": "hybrid",
+          "markdownDescription": "**Retrieval strategy** for RAG queries (applies to both simple and agentic modes):\n\n- **hybrid** (recommended): 70% semantic + 30% keyword\n- **vector**: Pure semantic similarity\n- **ensemble**: Advanced RRF fusion of vector + BM25 (slower, more accurate)\n- **bm25**: Pure keyword search with BM25 (no embeddings, fast exact matching)\n\n💡 _Can be overridden per query via LM tool parameter_",
+          "enum": [
+            "vector",
+            "hybrid",
+            "ensemble",
+            "bm25"
+          ],
+          "enumDescriptions": [
+            "Pure semantic search using embeddings only",
+            "Hybrid: Combines semantic + keyword matching (recommended)",
+            "Ensemble: Uses Reciprocal Rank Fusion with BM25 (most accurate, higher memory)",
+            "BM25: Pure keyword search (Okapi BM25 algorithm, no embeddings needed)"
+          ],
+          "order": 9
         },
         "ragnarok.useAgenticMode": {
           "type": "boolean",
-          "default": false,
+          "default": true,
           "markdownDescription": "**Enable Agentic RAG:** Multi-step retrieval with query planning, iterative refinement, and result evaluation. When disabled, uses simple single-shot retrieval.\n\n📚 [Learn more about Agentic RAG](https://github.com/hyorman/ragnarok#agentic-rag)",
           "order": 10
         },
@@ -101,25 +123,11 @@
           "markdownDescription": "Generate follow-up queries to fill information gaps detected during retrieval.\n\n⚠️ _Only applies when Agentic Mode is enabled_",
           "order": 13
         },
-        "ragnarok.agenticRetrievalStrategy": {
-          "type": "string",
-          "default": "hybrid",
-          "markdownDescription": "Search strategy for agentic mode:\n- **hybrid** (recommended): 70% semantic + 30% keyword\n- **vector**: Pure semantic similarity\n\n⚠️ _Only applies when Agentic Mode is enabled_",
-          "enum": [
-            "vector",
-            "hybrid"
-          ],
-          "enumDescriptions": [
-            "Pure semantic search using embeddings only",
-            "Hybrid: Combines semantic + keyword matching (recommended)"
-          ],
-          "order": 14
-        },
         "ragnarok.agenticUseLLM": {
           "type": "boolean",
           "default": false,
           "markdownDescription": "**Use LLM (Copilot) for intelligent planning:** Uses Copilot for query decomposition and result evaluation instead of rule-based heuristics.\n\n**Requirements:**\n- ✅ GitHub Copilot subscription\n- ✅ GitHub Copilot extension\n\n**Trade-offs:**\n- ✅ Much more intelligent\n- ✅ Context-aware planning\n- ⚠️ 2-3x slower\n- ⚠️ Uses Copilot API quota\n\n⚠️ _Only applies when Agentic Mode is enabled_",
-          "order": 15
+          "order": 14
         },
         "ragnarok.agenticLLMModel": {
           "type": "string",
@@ -135,13 +143,13 @@
             "GPT-4o-mini: Balanced performance and cost (recommended for most uses)",
             "GPT-3.5 Turbo: Fastest and most economical (lower quality reasoning)"
           ],
-          "order": 16
+          "order": 15
         },
         "ragnarok.agenticIncludeWorkspaceContext": {
           "type": "boolean",
           "default": true,
           "markdownDescription": "**Include workspace context:** Pass selected code, active file, imports, and symbols to Copilot (like #codebase).\n\n**Includes:**\n- Selected code (max 1000 chars)\n- File imports and symbols\n- Workspace name\n\n**Privacy:** Only relative paths, no sensitive data\n\n⚠️ _Only applies when LLM Mode is enabled_",
-          "order": 17
+          "order": 16
         }
       }
     },
@@ -294,39 +302,19 @@
               "type": "number",
               "description": "Number of top results to return (optional, uses configured value if not provided)"
             },
+            "retrievalStrategy": {
+              "type": "string",
+              "description": "Retrieval strategy: 'vector' (semantic only), 'hybrid' (semantic + keyword), 'ensemble' (RRF fusion), or 'bm25' (keyword only). Optional - uses configured value if not provided.",
+              "enum": [
+                "vector",
+                "hybrid",
+                "ensemble",
+                "bm25"
+              ]
+            },
             "useAgenticMode": {
               "type": "boolean",
-              "description": "Enable agentic RAG with multi-step query planning and iterative retrieval (optional, defaults to extension settings)"
-            },
-            "agenticConfig": {
-              "type": "object",
-              "description": "Configuration for agentic RAG behavior (optional)",
-              "properties": {
-                "maxIterations": {
-                  "type": "number",
-                  "description": "Maximum retrieval iterations (1-10)"
-                },
-                "confidenceThreshold": {
-                  "type": "number",
-                  "description": "Minimum confidence to stop retrieval (0-1)"
-                },
-                "enableIterativeRefinement": {
-                  "type": "boolean",
-                  "description": "Enable follow-up queries based on gaps"
-                },
-                "retrievalStrategy": {
-                  "type": "string",
-                  "enum": [
-                    "vector",
-                    "hybrid"
-                  ],
-                  "description": "Search strategy: 'vector' (semantic) or 'hybrid' (semantic + keyword)"
-                },
-                "useLLM": {
-                  "type": "boolean",
-                  "description": "Use LLM for intelligent query planning and evaluation (requires Copilot, slower but more intelligent)"
-                }
-              }
+              "description": "Enable agentic RAG with multi-step query planning and iterative retrieval (optional, defaults to extension settings). Note: All agentic configuration (iterations, confidence, etc.) is controlled via VS Code settings and cannot be overridden per query."
             }
           },
           "required": [
@@ -344,8 +332,8 @@
     "watch": "tsc -watch -p ./",
     "watch:tests": "tsc -watch -p ./tsconfig.test.json",
     "lint": "eslint src --ext ts",
-    "package": "vsce package --allow-package-all-secrets --allow-package-env-file",
-    "package:universal": "vsce package",
+    "package": "npm run package:all",
+    "package:dev": "vsce package",
     "package:win32-x64": "vsce package --target win32-x64",
     "package:win32-arm64": "vsce package --target win32-arm64",
     "package:darwin-x64": "vsce package --target darwin-x64",
@@ -377,7 +365,7 @@
   },
   "dependencies": {
     "@huggingface/transformers": "^3.7.6",
-    "@langchain/classic": "^1.0.1",
+    "@lancedb/lancedb": "^0.19.1",
     "@langchain/community": "^1.0.0",
     "@langchain/core": "^1.0.0",
     "@langchain/textsplitters": "^1.0.0",
@@ -390,8 +378,7 @@
     "@img/sharp-linux-arm64": "^0.33.5",
     "@img/sharp-linux-x64": "^0.33.5",
     "@img/sharp-win32-ia32": "^0.33.5",
-    "@img/sharp-win32-x64": "^0.33.5",
-    "faiss-node": "^0.5.1"
+    "@img/sharp-win32-x64": "^0.33.5"
   },
   "overrides": {
     "fsevents": {

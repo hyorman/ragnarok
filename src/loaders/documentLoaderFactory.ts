@@ -9,11 +9,32 @@
 import * as path from "path";
 import * as fs from "fs/promises";
 import { Document as LangChainDocument } from "@langchain/core/documents";
+import { BaseDocumentLoader } from "@langchain/core/document_loaders/base";
 import { PDFLoader } from "@langchain/community/document_loaders/fs/pdf";
-import { TextLoader } from "@langchain/classic/document_loaders/fs/text";
 import { CheerioWebBaseLoader } from "@langchain/community/document_loaders/web/cheerio";
 import { GithubRepoLoader } from "@langchain/community/document_loaders/web/github";
 import { Logger } from "../utils/logger";
+
+/**
+ * Text file loader - extends LangChain's BaseDocumentLoader
+ * Note: TextLoader is not available in @langchain/community v1.0 for Node.js,
+ * so we implement it following LangChain's patterns
+ */
+class TextLoader extends BaseDocumentLoader {
+  constructor(private filePath: string) {
+    super();
+  }
+  
+  async load(): Promise<LangChainDocument[]> {
+    const text = await fs.readFile(this.filePath, "utf-8");
+    return [
+      new LangChainDocument({ 
+        pageContent: text, 
+        metadata: { source: this.filePath } 
+      })
+    ];
+  }
+}
 
 export type SupportedFileType = "pdf" | "markdown" | "html" | "text" | "github";
 
@@ -353,7 +374,7 @@ export class DocumentLoaderFactory {
   }
 
   /**
-   * Load Markdown document using LangChain TextLoader
+   * Load Markdown document using TextLoader
    * Markdown is treated as text, structure will be preserved for semantic chunking
    */
   private async loadMarkdown(
@@ -454,7 +475,7 @@ export class DocumentLoaderFactory {
   }
 
   /**
-   * Load plain text document using LangChain TextLoader
+   * Load plain text document using TextLoader
    */
   private async loadText(
     filePath: string,

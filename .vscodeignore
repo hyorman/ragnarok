@@ -2,6 +2,7 @@
 .vscode/**
 .vscode-test/**
 test/**
+out/test/**
 scripts/**
 
 # Source files (compiled output in /out is included)
@@ -21,8 +22,6 @@ src/**
 # Dependencies - exclude all node_modules by default
 node_modules/**
 
-# Runtime dependencies - include these for the extension to work
-
 # LangChain dependencies (CRITICAL - needed for document loading and vector stores)
 !node_modules/@langchain/**
 !node_modules/langchain/**
@@ -36,6 +35,11 @@ node_modules/**
 !node_modules/decamelize/**
 !node_modules/ml-distance/**
 !node_modules/ml-distance-euclidean/**
+
+# LanceDB vector database (embedded, with platform-specific native binaries)
+!node_modules/@lancedb/**
+!node_modules/apache-arrow/**
+!node_modules/reflect-metadata/**
 
 # Transformers.js for embeddings
 !node_modules/@huggingface/transformers/**
@@ -63,7 +67,3 @@ node_modules/**
 # Utility dependencies
 !node_modules/semver/**
 !node_modules/async-mutex/**
-
-# Optional: FAISS (if available)
-!node_modules/faiss-node/**
-!node_modules/bindings/**

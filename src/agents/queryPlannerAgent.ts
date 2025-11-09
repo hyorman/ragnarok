@@ -219,7 +219,7 @@ Provide your analysis as valid JSON:`;
     const defaultTopK = options.defaultTopK || 5;
 
     // Analyze query for complexity indicators
-    const hasComparison = /\b(vs|versus|compare|difference|better|worse)\b/i.test(query);
+    const hasComparison = /\b(vs|versus|compare|difference|between|better|worse)\b/i.test(query);
     const hasMultipleQuestions = (query.match(/\?/g) || []).length > 1;
     const hasMultipleConcepts = query.split(/\band\b|\bor\b/i).length > 2;
     const isLongQuery = query.split(/\s+/).length > 15;
@@ -230,14 +230,14 @@ Provide your analysis as valid JSON:`;
     let explanation: string;
 
     if (hasComparison) {
-      // Comparison query - break into parts
+      // Comparison query 
       complexity = 'complex';
       strategy = 'parallel';
 
-      const parts = query.split(/\b(vs|versus|compare|difference)\b/i);
+      const parts = query.split(/\b(vs|versus|compare|difference|between)\b/i);
       subQueries = parts
         .filter((p) => p.trim().length > 3)
-        .filter((p) => !/^(vs|versus|compare|difference)$/i.test(p.trim()))
+        .filter((p) => !/^(vs|versus|compare|difference|between|and)$/i.test(p.trim()))
         .map((part, index) => ({
           query: part.trim(),
           reasoning: `Search for information about ${part.trim()}`,

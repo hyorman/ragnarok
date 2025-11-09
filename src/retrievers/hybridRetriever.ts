@@ -117,8 +117,36 @@ export class HybridRetriever {
           options.keywordBoosting
         );
 
-        // Normalize vector score (cosine similarity is typically 0-1, but can vary)
-        const normalizedVectorScore = Math.max(0, Math.min(1, vectorScore));
+        // Handle LanceDB distance/similarity score normalization
+        // LangChain's LanceDB returns undefined score but stores L2 distance in metadata
+        let normalizedVectorScore: number;
+        
+        // First, get the actual distance value
+        let distance: number | undefined = vectorScore;
+        if (distance === undefined || isNaN(distance)) {
+          // LanceDB stores the actual distance in metadata._distance
+          distance = doc.metadata?._distance;
+        }
+        
+        if (distance === undefined || isNaN(distance)) {
+          // No distance available - use neutral score for keyword-only ranking
+          normalizedVectorScore = 0.5;
+          this.logger.debug('No distance score available, using neutral score');
+        } else if (distance < 0) {
+          // Negative distances can occur with dot product similarity
+          // Convert to similarity: smaller absolute distance = higher similarity
+          normalizedVectorScore = 1 / (1 + Math.abs(distance));
+        } else if (distance <= 2.0) {
+          // Small positive values likely indicate cosine similarity (0-2 range)
+          // where 0 = identical, 2 = opposite
+          // Convert to similarity score: 0 distance → 1.0 similarity, 2 distance → 0.0 similarity
+          normalizedVectorScore = Math.max(0, 1 - (distance / 2));
+        } else {
+          // Large positive values indicate L2/Euclidean distance
+          // Convert distance to similarity: smaller distance = higher similarity
+          // Using formula: similarity = 1 / (1 + distance)
+          normalizedVectorScore = 1 / (1 + distance);
+        }
 
         // Calculate hybrid score as weighted combination
         const hybridScore =
@@ -185,6 +213,7 @@ export class HybridRetriever {
     } catch (error) {
       this.logger.error('Vector search failed', {
         error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined
       });
       throw error;
     }

@@ -4,10 +4,10 @@
  */
 
 import * as vscode from 'vscode';
-import { EmbeddingService } from './embeddingService';
+import { EmbeddingService } from './embeddings/embeddingService';
 import { TopicManager } from './managers/topicManager';
 import { RAGAgent } from './agents/ragAgent';
-import { RAGQueryParams, RAGQueryResult } from './utils/types';
+import { RAGQueryParams, RAGQueryResult, RetrievalStrategy } from './utils/types';
 import { TOOLS, CONFIG } from './utils/constants';
 import { WorkspaceContextProvider } from './utils/workspaceContext';
 import { Logger } from './utils/logger';
@@ -86,6 +86,10 @@ export class RAGTool {
       // Determine if we should use agentic mode
       const useAgenticMode = params.useAgenticMode ?? config.get<boolean>(CONFIG.USE_AGENTIC_MODE, false);
 
+      // Get retrieval strategy (from query params, or config, or default to hybrid)
+      const retrievalStrategy = params.retrievalStrategy ?? 
+        (config.get<string>(CONFIG.RETRIEVAL_STRATEGY, RetrievalStrategy.HYBRID) as RetrievalStrategy);
+
       // Get or create RAG agent for this topic
       const agent = await this.getOrCreateAgent(topicMatch.topic.id);
 
@@ -96,7 +100,7 @@ export class RAGTool {
         logger.info('Using agentic RAG mode');
 
         // Build agentic options from params and config
-        const agenticOptions = this.buildAgenticOptions(params, config);
+        const agenticOptions = this.buildAgenticOptions(params, config, retrievalStrategy);
 
         // Get workspace context (if LLM enabled and includeWorkspaceContext is true)
         const includeWorkspace = config.get<boolean>(CONFIG.AGENTIC_INCLUDE_WORKSPACE, true);
@@ -133,7 +137,7 @@ export class RAGTool {
         logger.info('Using simple RAG mode');
 
         // Use simple query (bypasses planning)
-        const simpleResults = await agent.simpleQuery(params.query, topK);
+        const simpleResults = await agent.simpleQuery(params.query, topK, retrievalStrategy);
 
         ragResult = {
           query: params.query,
@@ -168,6 +172,7 @@ export class RAGTool {
           text: result.document.pageContent,
           documentName: result.document.metadata.source || 'Unknown',
           similarity: Math.round(result.score * 100) / 100,
+          retrievalStrategy: result.source || 'unknown',
           metadata: {
             chunkIndex: result.document.metadata.chunkIndex || 0,
             position: result.document.metadata.loc?.lines
@@ -223,28 +228,28 @@ export class RAGTool {
 
   /**
    * Build agentic options from parameters and settings
+   * Note: All agentic configuration comes from VS Code settings only
    */
   private buildAgenticOptions(
     params: RAGQueryParams,
-    config: vscode.WorkspaceConfiguration
+    config: vscode.WorkspaceConfiguration,
+    retrievalStrategy: RetrievalStrategy
   ): {
     topK?: number;
     enableIterativeRefinement?: boolean;
     maxIterations?: number;
     confidenceThreshold?: number;
     useLLM?: boolean;
-    retrievalStrategy?: 'vector' | 'hybrid';
+    retrievalStrategy?: RetrievalStrategy;
     workspaceContext?: string;
   } {
-    const userConfig = params.agenticConfig || {};
-
     return {
       topK: params.topK ?? config.get<number>(CONFIG.TOP_K, 5),
-      enableIterativeRefinement: userConfig.enableIterativeRefinement ?? config.get<boolean>(CONFIG.AGENTIC_ITERATIVE_REFINEMENT, true),
-      maxIterations: userConfig.maxIterations ?? config.get<number>(CONFIG.AGENTIC_MAX_ITERATIONS, 3),
-      confidenceThreshold: userConfig.confidenceThreshold ?? config.get<number>(CONFIG.AGENTIC_CONFIDENCE_THRESHOLD, 0.7),
-      useLLM: userConfig.useLLM ?? config.get<boolean>(CONFIG.AGENTIC_USE_LLM, false),
-      retrievalStrategy: userConfig.retrievalStrategy ?? config.get<'vector' | 'hybrid'>(CONFIG.AGENTIC_RETRIEVAL_STRATEGY, 'hybrid'),
+      enableIterativeRefinement: config.get<boolean>(CONFIG.AGENTIC_ITERATIVE_REFINEMENT, true),
+      maxIterations: config.get<number>(CONFIG.AGENTIC_MAX_ITERATIONS, 3),
+      confidenceThreshold: config.get<number>(CONFIG.AGENTIC_CONFIDENCE_THRESHOLD, 0.7),
+      useLLM: config.get<boolean>(CONFIG.AGENTIC_USE_LLM, false),
+      retrievalStrategy: retrievalStrategy,
     };
   }
 

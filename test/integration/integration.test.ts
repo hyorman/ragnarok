@@ -4,14 +4,56 @@
  */
 
 import { expect } from 'chai';
-import { MemoryVectorStore } from '@langchain/classic/vectorstores/memory';
 import { Document as LangChainDocument } from '@langchain/core/documents';
 import { Embeddings } from '@langchain/core/embeddings';
+import { VectorStore } from '@langchain/core/vectorstores';
 import { RAGAgent } from '../../src/agents/ragAgent';
+import { RetrievalStrategy } from '../../src/utils/types';
 import { HybridRetriever } from '../../src/retrievers/hybridRetriever';
-import { EmbeddingService } from '../../src/embeddingService';
+import { EmbeddingService } from '../../src/embeddings/embeddingService';
 import { SemanticChunker } from '../../src/splitters/semanticChunker';
 import { QueryPlannerAgent } from '../../src/agents/queryPlannerAgent';
+
+// Simple in-memory VectorStore for testing
+class TestVectorStore extends VectorStore {
+  private docs: LangChainDocument[] = [];
+  private vectors: number[][] = [];
+
+  async addDocuments(documents: LangChainDocument[]): Promise<void> {
+    const texts = documents.map(d => d.pageContent);
+    const embeddings = await this.embeddings.embedDocuments(texts);
+    this.docs.push(...documents);
+    this.vectors.push(...embeddings);
+  }
+
+  async addVectors(vectors: number[][], documents: LangChainDocument[]): Promise<void> {
+    this.vectors.push(...vectors);
+    this.docs.push(...documents);
+  }
+
+  async similaritySearchVectorWithScore(query: number[], k: number): Promise<[LangChainDocument, number][]> {
+    const scores = this.vectors.map(vec => {
+      const dotProduct = vec.reduce((sum, val, i) => sum + val * query[i], 0);
+      const magA = Math.sqrt(vec.reduce((sum, val) => sum + val * val, 0));
+      const magB = Math.sqrt(query.reduce((sum, val) => sum + val * val, 0));
+      return dotProduct / (magA * magB);
+    });
+
+    const results = this.docs.map((doc, i) => ({ doc, score: scores[i] }));
+    results.sort((a, b) => b.score - a.score);
+    return results.slice(0, k).map(r => [r.doc, r.score]);
+  }
+
+  _vectorstoreType(): string {
+    return 'test-memory';
+  }
+
+  static async fromDocuments(docs: LangChainDocument[], embeddings: Embeddings): Promise<TestVectorStore> {
+    const store = new TestVectorStore(embeddings, {});
+    await store.addDocuments(docs);
+    return store;
+  }
+}
 
 // Mock Embeddings wrapper for testing
 class TestEmbeddings extends Embeddings {
@@ -58,7 +100,7 @@ describe('Integration Tests', function () {
         }),
       ];
 
-      const vectorStore = await MemoryVectorStore.fromDocuments(
+      const vectorStore = await TestVectorStore.fromDocuments(
         docs,
         testEmbeddings
       );
@@ -97,7 +139,7 @@ describe('Integration Tests', function () {
         }),
       ];
 
-      const vectorStore = await MemoryVectorStore.fromDocuments(
+      const vectorStore = await TestVectorStore.fromDocuments(
         docs,
         testEmbeddings
       );
@@ -120,7 +162,7 @@ describe('Integration Tests', function () {
   });
 
   describe('End-to-End Simple Query Workflow', function () {
-    let vectorStore: MemoryVectorStore;
+    let vectorStore: TestVectorStore;
     let ragAgent: RAGAgent;
 
     beforeEach(async function () {
@@ -148,7 +190,7 @@ describe('Integration Tests', function () {
         }),
       ];
 
-      vectorStore = await MemoryVectorStore.fromDocuments(testDocs, testEmbeddings);
+      vectorStore = await TestVectorStore.fromDocuments(testDocs, testEmbeddings);
       ragAgent = new RAGAgent();
       await ragAgent.initialize(vectorStore);
     });
@@ -191,7 +233,7 @@ describe('Integration Tests', function () {
   });
 
   describe('End-to-End Agentic Query Workflow', function () {
-    let vectorStore: MemoryVectorStore;
+    let vectorStore: TestVectorStore;
     let ragAgent: RAGAgent;
 
     beforeEach(async function () {
@@ -222,7 +264,7 @@ describe('Integration Tests', function () {
         }),
       ];
 
-      vectorStore = await MemoryVectorStore.fromDocuments(testDocs, testEmbeddings);
+      vectorStore = await TestVectorStore.fromDocuments(testDocs, testEmbeddings);
       ragAgent = new RAGAgent();
       await ragAgent.initialize(vectorStore);
     });
@@ -310,7 +352,7 @@ describe('Integration Tests', function () {
       const chunker = new SemanticChunker();
       const chunkResult = await chunker.chunkDocuments([sourceDoc]);
 
-      const vectorStore = await MemoryVectorStore.fromDocuments(
+      const vectorStore = await TestVectorStore.fromDocuments(
         chunkResult.chunks,
         testEmbeddings
       );
@@ -337,7 +379,7 @@ describe('Integration Tests', function () {
     });
 
     it('should handle empty vector store queries', async function () {
-      const emptyVectorStore = await MemoryVectorStore.fromDocuments(
+      const emptyVectorStore = await TestVectorStore.fromDocuments(
         [],
         testEmbeddings
       );
@@ -361,7 +403,7 @@ describe('Integration Tests', function () {
         })
       );
 
-      const vectorStore = await MemoryVectorStore.fromDocuments(
+      const vectorStore = await TestVectorStore.fromDocuments(
         docs,
         testEmbeddings
       );
@@ -393,7 +435,7 @@ describe('Integration Tests', function () {
         }),
       ];
 
-      const vectorStore = await MemoryVectorStore.fromDocuments(
+      const vectorStore = await TestVectorStore.fromDocuments(
         docs,
         testEmbeddings
       );
@@ -418,7 +460,7 @@ describe('Integration Tests', function () {
         }),
       ];
 
-      const vectorStore = await MemoryVectorStore.fromDocuments(
+      const vectorStore = await TestVectorStore.fromDocuments(
         docs,
         testEmbeddings
       );
@@ -428,15 +470,15 @@ describe('Integration Tests', function () {
 
       const vectorResult = await agent.query('test', {
         useLLM: false,
-        retrievalStrategy: 'vector',
+        retrievalStrategy: RetrievalStrategy.VECTOR,
       });
-      expect(vectorResult.metadata.strategy).to.equal('vector');
+      expect(vectorResult.metadata.strategy).to.equal(RetrievalStrategy.VECTOR);
 
       const hybridResult = await agent.query('test', {
         useLLM: false,
-        retrievalStrategy: 'hybrid',
+        retrievalStrategy: RetrievalStrategy.HYBRID,
       });
-      expect(hybridResult.metadata.strategy).to.equal('hybrid');
+      expect(hybridResult.metadata.strategy).to.equal(RetrievalStrategy.HYBRID);
     });
 
     it('should respect topK parameter', async function () {
@@ -447,7 +489,7 @@ describe('Integration Tests', function () {
         })
       );
 
-      const vectorStore = await MemoryVectorStore.fromDocuments(
+      const vectorStore = await TestVectorStore.fromDocuments(
         docs,
         testEmbeddings
       );

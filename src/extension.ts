@@ -5,7 +5,7 @@
 
 import * as vscode from "vscode";
 import { TopicManager } from "./managers/topicManager";
-import { EmbeddingService } from "./embeddingService";
+import { EmbeddingService } from "./embeddings/embeddingService";
 import { RAGTool } from "./ragTool";
 import { CommandHandler } from "./commands";
 import { TopicTreeDataProvider } from "./topicTreeView";

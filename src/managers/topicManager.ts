@@ -17,7 +17,8 @@ import {
   PipelineResult,
 } from "./documentPipeline";
 import { VectorStoreFactory } from "../stores/vectorStoreFactory";
-import { EmbeddingService } from "../embeddingService";
+import { EmbeddingService } from "../embeddings/embeddingService";
+import { TransformersEmbeddings } from "../embeddings/langchainEmbeddings";
 import { Logger } from "../utils/logger";
 import { EXTENSION, CONFIG } from "../utils/constants";
 
@@ -32,7 +33,6 @@ export interface TopicStats {
   documentCount: number;
   chunkCount: number;
   lastUpdated: number;
-  vectorStoreType: "memory" | "faiss";
   embeddingModel: string;
 }
 
@@ -123,18 +123,11 @@ export class TopicManager {
       const storageDir = this.getDatabaseDir();
       await this.documentPipeline.initialize(storageDir, embeddingModel);
 
-      // Create vector store factory
-      const embeddingsWrapper = {
-        embedDocuments: async (texts: string[]) => {
-          return await this.embeddingService.embedBatch(texts);
-        },
-        embedQuery: async (text: string) => {
-          return await this.embeddingService.embed(text);
-        },
-      };
+      // Create LangChain-compatible embeddings wrapper
+      const embeddings = new TransformersEmbeddings({ modelName: embeddingModel });
 
       this.vectorStoreFactory = new VectorStoreFactory(
-        embeddingsWrapper as any,
+        embeddings,
         storageDir,
         embeddingModel
       );
@@ -529,13 +522,11 @@ export class TopicManager {
       );
 
       let chunkCount = 0;
-      let vectorStoreType: "memory" | "faiss" = "memory";
 
       try {
         const metadataJson = await fs.readFile(metadataPath, "utf-8");
         const metadata = JSON.parse(metadataJson);
         chunkCount = metadata.chunkCount || 0;
-        vectorStoreType = metadata.type || "memory";
       } catch {
         // Metadata not available
       }
@@ -544,7 +535,6 @@ export class TopicManager {
         documentCount,
         chunkCount,
         lastUpdated: topic.updatedAt,
-        vectorStoreType,
         embeddingModel: this.topicsIndex.modelName,
       };
     } catch (error) {

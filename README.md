@@ -387,7 +387,7 @@ const results = await topicManager.addDocuments(
 
 // Get topic stats
 const stats = await topicManager.getTopicStats(topic.id);
-// { documentCount, chunkCount, vectorStoreType, embeddingModel, lastUpdated }
+// { documentCount, chunkCount, embeddingModel, lastUpdated }
 
 // Delete topic
 await topicManager.deleteTopic(topic.id);

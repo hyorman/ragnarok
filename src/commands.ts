@@ -5,7 +5,7 @@
 
 import * as vscode from "vscode";
 import { TopicManager } from "./managers/topicManager";
-import { EmbeddingService } from "./embeddingService";
+import { EmbeddingService } from "./embeddings/embeddingService";
 import { TopicTreeDataProvider } from "./topicTreeView";
 import { COMMANDS } from "./utils/constants";
 import { Logger } from "./utils/logger";

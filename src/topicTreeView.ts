@@ -95,6 +95,15 @@ export class TopicTreeDataProvider
     const config = vscode.workspace.getConfiguration(CONFIG.ROOT);
     const items: TopicTreeItem[] = [];
 
+    // Retrieval strategy (applies to all modes)
+    const strategy = config.get<string>(CONFIG.RETRIEVAL_STRATEGY, "hybrid");
+    items.push(
+      new TopicTreeItem(
+        { key: "retrieval-strategy", value: strategy },
+        "config-item"
+      )
+    );
+
     // Agentic mode status
     const useAgenticMode = config.get<boolean>(CONFIG.USE_AGENTIC_MODE, false);
     items.push(
@@ -109,18 +118,6 @@ export class TopicTreeDataProvider
       const useLLM = config.get<boolean>(CONFIG.AGENTIC_USE_LLM, false);
       items.push(
         new TopicTreeItem({ key: "use-llm", value: useLLM }, "config-item")
-      );
-
-      // Retrieval strategy
-      const strategy = config.get<string>(
-        CONFIG.AGENTIC_RETRIEVAL_STRATEGY,
-        "hybrid"
-      );
-      items.push(
-        new TopicTreeItem(
-          { key: "retrieval-strategy", value: strategy },
-          "config-item"
-        )
       );
 
       // Max iterations
@@ -169,14 +166,6 @@ export class TopicTreeDataProvider
     items.push(
       new TopicTreeItem(
         { key: "chunk-count", value: stats.chunkCount },
-        "stat-item"
-      )
-    );
-
-    // Vector store type
-    items.push(
-      new TopicTreeItem(
-        { key: "vector-store", value: stats.vectorStoreType },
         "stat-item"
       )
     );
@@ -284,8 +273,6 @@ export class TopicTreeItem extends vscode.TreeItem {
         return `📄 Documents: ${value}`;
       case "chunk-count":
         return `📦 Chunks: ${value}`;
-      case "vector-store":
-        return `💾 Store: ${value === "faiss" ? "FAISS (Fast)" : "Memory"}`;
       case "embedding-model":
         return `🤖 Model: ${value}`;
       case "last-updated":
