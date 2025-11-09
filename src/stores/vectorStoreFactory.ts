@@ -58,16 +58,16 @@ export class VectorStoreFactory {
    */
   public async initialize(): Promise<void> {
     this.logger.info("Initializing vector store factory");
-    
+
     try {
       // Ensure LanceDB directory exists
       await fs.mkdir(this.lanceDbUri, { recursive: true });
-      
+
       // Test connection to LanceDB
       const db = await connect(this.lanceDbUri);
       const tables = await db.tableNames();
-      
-      this.logger.info("LanceDB ready", { 
+
+      this.logger.info("LanceDB ready", {
         uri: this.lanceDbUri,
         existingTables: tables.length
       });
@@ -83,33 +83,36 @@ export class VectorStoreFactory {
 
   public async createStore(config: VectorStoreConfig, initialDocuments?: LangChainDocument[]): Promise<VectorStore> {
     this.logger.info("Creating vector store", { topicId: config.topicId, documentCount: initialDocuments?.length || 0 });
-    
+
     try {
       // Connect to LanceDB
       const db = await connect(this.lanceDbUri);
-      
+
       // Check if table exists and drop it to start fresh
       const tableNames = await db.tableNames();
       if (tableNames.includes(config.topicId)) {
         await db.dropTable(config.topicId);
         this.logger.debug("Dropped existing table", { topicId: config.topicId });
       }
-      
+
       // If we have initial documents, create with them
       // Otherwise create an empty vector store that's ready for documents
       const docs = initialDocuments && initialDocuments.length > 0 ? initialDocuments : [];
-      
+
+      // Normalize metadata to ensure schema consistency
+      const normalizedDocs = docs.length > 0 ? this.normalizeDocumentMetadata(docs) : docs;
+
       const store = await LanceDB.fromDocuments(
-        docs,
+        normalizedDocs,
         this.embeddings,
         {
           uri: this.lanceDbUri,
           tableName: config.topicId
         }
       );
-      
+
       this.storeCache.set(config.topicId, store);
-      this.logger.info("Vector store created successfully", { topicId: config.topicId, hasInitialDocs: docs.length > 0 });
+      this.logger.info("Vector store created successfully", { topicId: config.topicId, hasInitialDocs: normalizedDocs.length > 0 });
       return store;
     } catch (error) {
       this.logger.error("Failed to create vector store", { error: error instanceof Error ? error.message : String(error), config });
@@ -119,35 +122,35 @@ export class VectorStoreFactory {
 
   public async loadStore(topicId: string): Promise<VectorStore | null> {
     this.logger.info("Loading vector store", { topicId });
-    
+
     const cachedStore = this.storeCache.get(topicId);
     if (cachedStore) {
       this.logger.debug("Returning cached store", { topicId });
       return cachedStore;
     }
-    
+
     try {
       // Connect to LanceDB database
       const db = await connect(this.lanceDbUri);
       const tableNames = await db.tableNames();
-      
+
       if (!tableNames.includes(topicId)) {
         this.logger.debug("Table not found", { topicId });
         return null;
       }
-      
+
       // Open existing table
       const table = await db.openTable(topicId);
-      
+
       // Create vector store from existing table (per LangChain docs)
       const store = new LanceDB(this.embeddings, { table });
-      
+
       this.storeCache.set(topicId, store);
       this.logger.info("Vector store loaded successfully", { topicId });
       return store;
     } catch (error) {
-      this.logger.error("Failed to load vector store", { 
-        topicId, 
+      this.logger.error("Failed to load vector store", {
+        topicId,
         error: error instanceof Error ? error.message : String(error),
         stack: error instanceof Error ? error.stack : undefined
       });
@@ -218,11 +221,11 @@ export class VectorStoreFactory {
     this.logger.info("Deleting vector store", { topicId });
     try {
       this.storeCache.delete(topicId);
-      
+
       // Drop the LanceDB table
       const db = await connect(this.lanceDbUri);
       await db.dropTable(topicId);
-      
+
       const metadataPath = this.getMetadataPath(topicId);
       try {
         await fs.unlink(metadataPath);
@@ -239,14 +242,17 @@ export class VectorStoreFactory {
   public async addDocuments(topicId: string, store: VectorStore, documents: LangChainDocument[]): Promise<void> {
     this.logger.info("Adding documents to vector store", { topicId, documentCount: documents.length });
     try {
+      // Normalize metadata to prevent schema mismatches
+      const normalizedDocuments = this.normalizeDocumentMetadata(documents);
+
       const BATCH_SIZE = 500;
-      for (let i = 0; i < documents.length; i += BATCH_SIZE) {
-        const batch = documents.slice(i, Math.min(i + BATCH_SIZE, documents.length));
-        const progressPercent = Math.round(((i + batch.length) / documents.length) * 100);
-        this.logger.info(`Adding document batch to vector store`, { topicId, batchStart: i, batchEnd: i + batch.length, totalDocuments: documents.length, progress: `${progressPercent}%` });
+      for (let i = 0; i < normalizedDocuments.length; i += BATCH_SIZE) {
+        const batch = normalizedDocuments.slice(i, Math.min(i + BATCH_SIZE, normalizedDocuments.length));
+        const progressPercent = Math.round(((i + batch.length) / normalizedDocuments.length) * 100);
+        this.logger.info(`Adding document batch to vector store`, { topicId, batchStart: i, batchEnd: i + batch.length, totalDocuments: normalizedDocuments.length, progress: `${progressPercent}%` });
         await store.addDocuments(batch);
       }
-      this.logger.info("Documents added successfully", { topicId, documentCount: documents.length });
+      this.logger.info("Documents added successfully", { topicId, documentCount: normalizedDocuments.length });
     } catch (error) {
       this.logger.error("Failed to add documents", { error: error instanceof Error ? error.message : String(error), topicId, documentCount: documents.length });
       throw error;
@@ -261,6 +267,50 @@ export class VectorStoreFactory {
       this.storeCache.clear();
       this.logger.debug("All store cache cleared");
     }
+  }
+
+  /**
+   * Normalize document metadata to ensure schema consistency across all documents
+   * This prevents LanceDB schema mismatch errors when adding documents with different metadata
+   */
+  private normalizeDocumentMetadata(documents: LangChainDocument[]): LangChainDocument[] {
+    return documents.map((doc) => {
+      // Keep only essential, consistent metadata fields
+      const allowedFields = [
+        'source',
+        'fileName',
+        'filePath',
+        'fileType',
+        'fileSize',
+        'loadedAt',
+        'chunkIndex',
+        'totalChunks',
+        'loc',
+        'isMarkdown',
+        'preserveStructure'
+      ];
+
+      const normalizedMetadata: Record<string, any> = {};
+
+      // Copy only allowed fields
+      for (const field of allowedFields) {
+        if (field in doc.metadata) {
+          normalizedMetadata[field] = doc.metadata[field];
+        }
+      }
+
+      // Convert loc object to simple fields if present (for compatibility)
+      if (doc.metadata.loc && typeof doc.metadata.loc === 'object') {
+        normalizedMetadata.loc_lines_from = doc.metadata.loc.lines?.from;
+        normalizedMetadata.loc_lines_to = doc.metadata.loc.lines?.to;
+        delete normalizedMetadata.loc; // Remove complex object
+      }
+
+      return new LangChainDocument({
+        pageContent: doc.pageContent,
+        metadata: normalizedMetadata,
+      });
+    });
   }
 
   private getMetadataPath(topicId: string): string {
