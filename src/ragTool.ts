@@ -84,10 +84,10 @@ export class RAGTool {
       logger.info(`Topic matched: ${topicMatch.topic.name} (${topicMatch.matchType}), ${stats.documentCount} documents, ${stats.chunkCount} chunks`);
 
       // Determine if we should use agentic mode
-      const useAgenticMode = params.useAgenticMode ?? config.get<boolean>(CONFIG.USE_AGENTIC_MODE, false);
+      const useAgenticMode = params.useAgenticMode ?? config.get<boolean>(CONFIG.USE_AGENTIC_MODE, true);
 
       // Get retrieval strategy (from query params, or config, or default to hybrid)
-      const retrievalStrategy = params.retrievalStrategy ?? 
+      const retrievalStrategy = params.retrievalStrategy ??
         (config.get<string>(CONFIG.RETRIEVAL_STRATEGY, RetrievalStrategy.HYBRID) as RetrievalStrategy);
 
       // Get or create RAG agent for this topic

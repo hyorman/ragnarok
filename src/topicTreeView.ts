@@ -5,7 +5,7 @@
 
 import * as vscode from "vscode";
 import { TopicManager } from "./managers/topicManager";
-import { Topic, Document } from "./utils/types";
+import { Topic, Document, RetrievalStrategy } from "./utils/types";
 import { Logger } from "./utils/logger";
 import { CONFIG } from "./utils/constants";
 
@@ -251,11 +251,15 @@ export class TopicTreeItem extends vscode.TreeItem {
         return `LLM Planning: ${value ? "✅ Enabled" : "❌ Disabled"}`;
       case "retrieval-strategy":
         return `Strategy: ${
-          value === "hybrid"
+          value === RetrievalStrategy.HYBRID
             ? "🔀 Hybrid"
-            : value === "vector"
+            : value === RetrievalStrategy.VECTOR
             ? "🎯 Vector"
-            : "🔍 Keyword"
+            : value === RetrievalStrategy.ENSEMBLE
+            ? "🎭 Ensemble"
+            : value === RetrievalStrategy.BM25
+            ? "🔍 BM25"
+            : "❓ Unknown"
         }`;
       case "max-iterations":
         return `Max Iterations: ${value}`;
