@@ -2,6 +2,16 @@
  * Core types for the RAG extension
  */
 
+/**
+ * Retrieval strategies for RAG queries
+ */
+export enum RetrievalStrategy {
+  VECTOR = 'vector',
+  HYBRID = 'hybrid',
+  ENSEMBLE = 'ensemble',
+  BM25 = 'bm25',
+}
+
 export interface Topic {
   id: string;
   name: string;
@@ -64,6 +74,10 @@ export interface RAGQueryParams {
   topic: string;
   query: string;
   topK?: number;
+  retrievalStrategy?: RetrievalStrategy;
+  // Note: Agentic RAG configuration is controlled via VS Code settings only
+  // Users cannot override agentic settings per query
+  useAgenticMode?: boolean;
 }
 
 export interface RAGQueryResult {
@@ -71,6 +85,7 @@ export interface RAGQueryResult {
     text: string;
     documentName: string;
     similarity: number;
+    retrievalStrategy: string;
     metadata: {
       chunkIndex: number;
       position: string;
@@ -83,5 +98,20 @@ export interface RAGQueryResult {
   topicMatched: 'exact' | 'similar' | 'fallback';
   requestedTopic?: string;
   availableTopics?: string[];
+  // Agentic RAG results
+  agenticMetadata?: {
+    mode: 'simple' | 'agentic';
+    steps?: Array<{
+      stepNumber: number;
+      query: string;
+      strategy: string;
+      resultsCount: number;
+      confidence: number;
+      reasoning: string;
+    }>;
+    totalIterations?: number;
+    queryComplexity?: 'simple' | 'moderate' | 'complex';
+    confidence?: number;
+  };
 }
 

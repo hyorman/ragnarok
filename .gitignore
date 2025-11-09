@@ -1,6 +1,8 @@
 # Compiled output
 out/
+dist/
 *.js
+!esbuild.js
 *.js.map
 !test/fixtures/**
 !scripts/**
@@ -9,8 +11,8 @@ out/
 node_modules/
 
 # IDE
-.vscode/
-.vscode-test/
+.vscode/**
+.vscode-test/**
 *.vsix
 
 # OS
@@ -28,6 +30,7 @@ package-lock.json
 coverage/
 .nyc_output/
 test/chunk-output/
+test/.temp-storage/
 
 # Environment
 .env
