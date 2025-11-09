@@ -428,6 +428,7 @@ export class VectorStoreFactory {
 
   /**
    * Add documents to an existing store
+   * Optimized: Adds documents in batches to avoid memory issues with large sets
    */
   public async addDocuments(
     topicId: string,
@@ -440,7 +441,24 @@ export class VectorStoreFactory {
     });
 
     try {
-      await store.addDocuments(documents);
+      // Batch documents to avoid overwhelming the embedding service
+      // Increased to 500 for very large document sets (100k+ chunks)
+      const BATCH_SIZE = 500;
+      
+      for (let i = 0; i < documents.length; i += BATCH_SIZE) {
+        const batch = documents.slice(i, Math.min(i + BATCH_SIZE, documents.length));
+        const progressPercent = Math.round(((i + batch.length) / documents.length) * 100);
+        
+        this.logger.info(`Adding document batch to vector store`, {
+          topicId,
+          batchStart: i,
+          batchEnd: i + batch.length,
+          totalDocuments: documents.length,
+          progress: `${progressPercent}%`,
+        });
+        
+        await store.addDocuments(batch);
+      }
 
       this.logger.info("Documents added successfully", {
         topicId,
@@ -539,18 +557,18 @@ export class VectorStoreFactory {
       // Reconstruct the store from serialized data
       const store = new MemoryVectorStore(this.embeddings);
 
-      // Manually populate the store
-      // Note: This is a workaround since MemoryVectorStore doesn't have native persistence
+      // Manually populate the store with saved vectors (including embeddings)
+      // IMPORTANT: We directly set memoryVectors to preserve embeddings
+      // instead of calling addDocuments() which would regenerate them
       if (vectors && vectors.length > 0) {
-        const documents = vectors.map(
-          (v: any) =>
-            new LangChainDocument({
-              pageContent: v.content,
-              metadata: v.metadata,
-            })
-        );
+        // Directly populate the internal memoryVectors array
+        // This preserves the embeddings that were already computed
+        (store as any).memoryVectors = vectors;
 
-        await store.addDocuments(documents);
+        this.logger.debug("MemoryVectorStore loaded from disk", {
+          topicId,
+          vectorCount: vectors.length,
+        });
       }
 
       return store;

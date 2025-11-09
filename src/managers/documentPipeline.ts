@@ -215,7 +215,27 @@ export class DocumentPipeline {
       this.logger.info("Documents loaded", {
         count: loadedDocs.length,
         time: result.metadata.stageTimings.loading,
+        totalContentLength: loadedDocs.reduce(
+          (sum, doc) => sum + doc.pageContent.length,
+          0
+        ),
+        sources: loadedDocs.map((doc) => doc.metadata.source || "unknown"),
       });
+
+      // Stop if no documents were loaded - this is a critical failure
+      if (loadedDocs.length === 0) {
+        const errorMessage = "No documents loaded - document loading failed. Check file paths, loader configuration, or API rate limits.";
+        this.logger.error(errorMessage, {
+          filePaths,
+          loaderOptions: options.loaderOptions,
+        });
+        if (!result.errors) {
+          result.errors = [];
+        }
+        result.errors.push(errorMessage);
+        result.metadata.totalTime = Date.now() - startTime;
+        throw new Error(errorMessage);
+      }
 
       // Stage 2: Chunk documents
       const chunkStartTime = Date.now();
@@ -236,10 +256,29 @@ export class DocumentPipeline {
       result.metadata.stageTimings.chunking = Date.now() - chunkStartTime;
 
       this.logger.info("Documents chunked", {
+        inputDocuments: loadedDocs.length,
         chunkCount: chunkingResult.chunkCount,
         strategy: chunkingResult.strategy,
         time: result.metadata.stageTimings.chunking,
+        avgChunkSize:
+          chunkingResult.chunkCount > 0
+            ? Math.round(
+                chunkingResult.chunks.reduce(
+                  (sum, c) => sum + c.pageContent.length,
+                  0
+                ) / chunkingResult.chunkCount
+              )
+            : 0,
       });
+
+      // Log warning if no chunks were created
+      if (chunkingResult.chunkCount === 0) {
+        this.logger.warn("No chunks created from documents", {
+          inputDocuments: loadedDocs.length,
+          strategy: chunkingResult.strategy,
+          chunkingOptions: options.chunkingOptions,
+        });
+      }
 
       // Stage 3: Generate embeddings
       this.reportProgress(options.onProgress, {

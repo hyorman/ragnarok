@@ -9,7 +9,7 @@
 
 import * as vscode from 'vscode';
 import { Mutex } from 'async-mutex';
-import { CONFIG } from './constants';
+import { CONFIG } from './utils/constants';
 import { Logger } from './utils/logger';
 
 // Type definitions for the dynamically imported transformers module
@@ -181,6 +181,20 @@ export class EmbeddingService {
   }
 
   /**
+   * Truncate text to fit within model's token limit
+   * Most models use ~256 word pieces, which is roughly 512-768 characters
+   * We'll be conservative and truncate at 512 characters to be safe
+   */
+  private truncateText(text: string, maxChars: number = 512): string {
+    if (text.length <= maxChars) {
+      return text;
+    }
+    
+    // Truncate and add ellipsis
+    return text.substring(0, maxChars - 3) + '...';
+  }
+
+  /**
    * Generate embeddings for a single text
    */
   public async embed(text: string): Promise<number[]> {
@@ -193,8 +207,11 @@ export class EmbeddingService {
     }
 
     try {
+      // Truncate text to fit model's limit (256 word pieces ~= 512 chars)
+      const truncatedText = this.truncateText(text);
+      
       // Generate embedding
-      const output = await this.pipeline(text, {
+      const output = await this.pipeline(truncatedText, {
         pooling: 'mean',
         normalize: true,
       });
@@ -230,21 +247,36 @@ export class EmbeddingService {
       const embeddings: number[][] = [];
 
       // Process in batches to avoid memory issues
-      const batchSize = 10;
+      // Smaller batches but parallelized for much better performance
+      const batchSize = 1000; // Process 1000 at a time in parallel
+      
       for (let i = 0; i < texts.length; i += batchSize) {
         const batch = texts.slice(i, i + batchSize);
 
-        for (const text of batch) {
-          const output = await this.pipeline(text, {
+        // Log progress for large batches
+        if (texts.length > 100) {
+          const progressPercent = Math.round(((i + batch.length) / texts.length) * 100);
+          this.logger.info(`Generating embeddings: ${i + batch.length}/${texts.length} (${progressPercent}%)`);
+        }
+
+        // Process batch in parallel for MUCH faster performance
+        const batchPromises = batch.map(async (text) => {
+          // Truncate text to fit model's limit (256 word pieces ~= 512 chars)
+          const truncatedText = this.truncateText(text);
+          
+          const output = await this.pipeline!(truncatedText, {
             pooling: 'mean',
             normalize: true,
           });
-          embeddings.push(Array.from((output as any).data) as number[]);
+          return Array.from((output as any).data) as number[];
+        });
 
-          // Report progress
-          if (progressCallback) {
-            progressCallback(embeddings.length / texts.length);
-          }
+        const batchEmbeddings = await Promise.all(batchPromises);
+        embeddings.push(...batchEmbeddings);
+
+        // Report progress
+        if (progressCallback) {
+          progressCallback(embeddings.length / texts.length);
         }
 
         // Allow garbage collection between batches

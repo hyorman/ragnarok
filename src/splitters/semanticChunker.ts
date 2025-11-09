@@ -13,7 +13,7 @@ import { Document as LangChainDocument } from '@langchain/core/documents';
 import { RecursiveCharacterTextSplitter } from '@langchain/textsplitters';
 import { MarkdownTextSplitter } from '@langchain/textsplitters';
 import { Logger } from '../utils/logger';
-import { CONFIG } from '../constants';
+import { CONFIG } from '../utils/constants';
 
 export interface ChunkingOptions {
   /** Target chunk size in characters */
@@ -105,11 +105,41 @@ export class SemanticChunker {
       // Get or create splitter
       const splitter = this.createSplitter(strategy, options);
 
-      // Split documents
-      const chunks = await splitter.splitDocuments(documents);
+      // Split documents in batches to avoid stack overflow with large document sets
+      const BATCH_SIZE = 200; // Increased for better performance with large repos
+      const chunks: LangChainDocument[] = [];
 
-      // Add chunk metadata
-      const enrichedChunks = this.enrichChunks(chunks, options);
+      for (let i = 0; i < documents.length; i += BATCH_SIZE) {
+        const batch = documents.slice(i, Math.min(i + BATCH_SIZE, documents.length));
+        const progressPercent = Math.round((i / documents.length) * 100);
+        
+        this.logger.info('Processing document batch', {
+          batchStart: i,
+          batchEnd: Math.min(i + BATCH_SIZE, documents.length),
+          totalDocuments: documents.length,
+          chunksCollected: chunks.length,
+          progress: `${progressPercent}%`,
+        });
+
+        const batchChunks = await splitter.splitDocuments(batch);
+        
+        // Use direct assignment for better performance
+        for (let j = 0; j < batchChunks.length; j++) {
+          chunks.push(batchChunks[j]);
+        }
+        
+        // Yield to event loop periodically to keep UI responsive
+        if (i % 500 === 0 && i > 0) {
+          await new Promise(resolve => setImmediate(resolve));
+        }
+      }
+
+      this.logger.info('Splitting complete, enriching chunks...', {
+        totalChunks: chunks.length,
+      });
+
+      // Add chunk metadata in batches to avoid stack overflow
+      const enrichedChunks = this.enrichChunksInBatches(chunks, options);
 
       // Calculate statistics
       const stats = this.calculateStats(enrichedChunks);
@@ -175,6 +205,7 @@ export class SemanticChunker {
 
   /**
    * Determine the best chunking strategy based on documents and options
+   * Optimized: Only samples first 20 documents instead of scanning all for performance
    */
   private determineStrategy(
     documents: LangChainDocument[],
@@ -189,8 +220,12 @@ export class SemanticChunker {
       return 'code';
     }
 
+    // Sample only first 20 documents for strategy detection (performance optimization)
+    const sampleSize = Math.min(20, documents.length);
+    const sampleDocs = documents.slice(0, sampleSize);
+
     // Check document metadata
-    const hasMarkdown = documents.some(
+    const hasMarkdown = sampleDocs.some(
       (doc) => doc.metadata.isMarkdown || doc.metadata.fileType === 'markdown'
     );
 
@@ -199,7 +234,7 @@ export class SemanticChunker {
     }
 
     // Check if content looks like code
-    const hasCode = documents.some((doc) => {
+    const hasCode = sampleDocs.some((doc) => {
       const content = doc.pageContent;
       // Simple heuristic: check for common code patterns
       const codePatterns = [
@@ -318,35 +353,60 @@ export class SemanticChunker {
   }
 
   /**
-   * Enrich chunks with additional metadata
+   * Enrich chunks with additional metadata (batched to avoid stack overflow)
    */
-  private enrichChunks(
+  private enrichChunksInBatches(
     chunks: LangChainDocument[],
     options: ChunkingOptions
   ): LangChainDocument[] {
-    return chunks.map((chunk, index) => {
-      // Extract heading information if present
-      const headingInfo = this.extractHeadingInfo(chunk.pageContent);
-
-      const metadata: Record<string, any> = {
-        ...chunk.metadata,
-        chunkIndex: index,
-        chunkSize: chunk.pageContent.length,
-        chunkId: this.generateChunkId(chunk, index),
-        chunkedAt: Date.now(),
-      };
-
-      // Add heading metadata if requested and available
-      if (options.includeHeadingMetadata !== false && headingInfo) {
-        metadata.headingPath = headingInfo.headingPath;
-        metadata.headingLevel = headingInfo.headingLevel;
-        metadata.sectionTitle = headingInfo.sectionTitle;
-      }
-
-      return new LangChainDocument({
-        pageContent: chunk.pageContent,
-        metadata,
+    const BATCH_SIZE = 1000;
+    const enriched: LangChainDocument[] = [];
+    
+    for (let i = 0; i < chunks.length; i += BATCH_SIZE) {
+      const batch = chunks.slice(i, Math.min(i + BATCH_SIZE, chunks.length));
+      const batchEnriched = batch.map((chunk, batchIndex) => {
+        const globalIndex = i + batchIndex;
+        return this.enrichSingleChunk(chunk, globalIndex, options);
       });
+      
+      // Use direct assignment instead of spread
+      for (const enrichedChunk of batchEnriched) {
+        enriched.push(enrichedChunk);
+      }
+    }
+    
+    return enriched;
+  }
+
+  /**
+   * Enrich a single chunk with metadata
+   */
+  private enrichSingleChunk(
+    chunk: LangChainDocument,
+    index: number,
+    options: ChunkingOptions
+  ): LangChainDocument {
+    // Extract heading information if present
+    const headingInfo = this.extractHeadingInfo(chunk.pageContent);
+
+    const metadata: Record<string, any> = {
+      ...chunk.metadata,
+      chunkIndex: index,
+      chunkSize: chunk.pageContent.length,
+      chunkId: this.generateChunkId(chunk, index),
+      chunkedAt: Date.now(),
+    };
+
+    // Add heading metadata if requested and available
+    if (options.includeHeadingMetadata !== false && headingInfo) {
+      metadata.headingPath = headingInfo.headingPath;
+      metadata.headingLevel = headingInfo.headingLevel;
+      metadata.sectionTitle = headingInfo.sectionTitle;
+    }
+
+    return new LangChainDocument({
+      pageContent: chunk.pageContent,
+      metadata,
     });
   }
 
@@ -404,13 +464,26 @@ export class SemanticChunker {
       };
     }
 
-    const sizes = chunks.map((chunk) => chunk.pageContent.length);
-    const totalCharacters = sizes.reduce((sum, size) => sum + size, 0);
+    // Avoid stack overflow by calculating stats iteratively instead of using spread
+    let totalCharacters = 0;
+    let minChunkSize = Number.MAX_SAFE_INTEGER;
+    let maxChunkSize = 0;
+
+    for (const chunk of chunks) {
+      const size = chunk.pageContent.length;
+      totalCharacters += size;
+      if (size < minChunkSize) {
+        minChunkSize = size;
+      }
+      if (size > maxChunkSize) {
+        maxChunkSize = size;
+      }
+    }
 
     return {
       avgChunkSize: Math.round(totalCharacters / chunks.length),
-      minChunkSize: Math.min(...sizes),
-      maxChunkSize: Math.max(...sizes),
+      minChunkSize,
+      maxChunkSize,
       totalCharacters,
     };
   }

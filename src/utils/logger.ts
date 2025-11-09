@@ -4,7 +4,7 @@
  */
 
 import * as vscode from 'vscode';
-import { CONFIG } from '../constants';
+import { CONFIG } from './constants';
 
 export enum LogLevel {
   DEBUG = 0,

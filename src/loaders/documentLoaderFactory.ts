@@ -6,16 +6,16 @@
  * Uses LangChain's battle-tested document loaders for better parsing
  */
 
-import * as path from 'path';
-import * as fs from 'fs/promises';
-import { Document as LangChainDocument } from '@langchain/core/documents';
-import { PDFLoader } from '@langchain/community/document_loaders/fs/pdf';
-import { TextLoader } from '@langchain/classic/document_loaders/fs/text';
-import { CheerioWebBaseLoader } from '@langchain/community/document_loaders/web/cheerio';
-import { GithubRepoLoader } from '@langchain/community/document_loaders/web/github';
-import { Logger } from '../utils/logger';
+import * as path from "path";
+import * as fs from "fs/promises";
+import { Document as LangChainDocument } from "@langchain/core/documents";
+import { PDFLoader } from "@langchain/community/document_loaders/fs/pdf";
+import { TextLoader } from "@langchain/classic/document_loaders/fs/text";
+import { CheerioWebBaseLoader } from "@langchain/community/document_loaders/web/cheerio";
+import { GithubRepoLoader } from "@langchain/community/document_loaders/web/github";
+import { Logger } from "../utils/logger";
 
-export type SupportedFileType = 'pdf' | 'markdown' | 'html' | 'text' | 'github';
+export type SupportedFileType = "pdf" | "markdown" | "html" | "text" | "github";
 
 export interface LoaderOptions {
   /** File path to load (or GitHub repo URL for github type) */
@@ -79,7 +79,7 @@ export class DocumentLoaderFactory {
   private logger: Logger;
 
   constructor() {
-    this.logger = new Logger('DocumentLoaderFactory');
+    this.logger = new Logger("DocumentLoaderFactory");
   }
 
   /**
@@ -89,39 +89,45 @@ export class DocumentLoaderFactory {
     const startTime = Date.now();
     const { filePath, additionalMetadata = {} } = options;
 
-    this.logger.info('Loading document', { filePath });
+    this.logger.info("Loading document", { filePath });
 
     try {
-      // Validate file exists
-      await this.validateFile(filePath);
-
-      // Detect file type if not specified
+      // Detect file type first (before validation, as GitHub URLs don't need file validation)
       const fileType = options.fileType || this.detectFileType(filePath);
+
+      // Validate file exists (skip for GitHub URLs)
+      if (fileType !== "github") {
+        await this.validateFile(filePath);
+      }
+
       const fileName = path.basename(filePath);
 
-      this.logger.debug('Detected file type', { fileName, fileType });
+      this.logger.debug("Detected file type", { fileName, fileType });
 
-      // Get file size
-      const stats = await fs.stat(filePath);
-      const fileSize = stats.size;
+      // Get file size (skip for GitHub URLs as they're not local files)
+      let fileSize = 0;
+      if (fileType !== "github") {
+        const stats = await fs.stat(filePath);
+        fileSize = stats.size;
+      }
 
       // Load documents based on type
       let documents: LangChainDocument[];
 
       switch (fileType) {
-        case 'pdf':
+        case "pdf":
           documents = await this.loadPDF(filePath, options);
           break;
-        case 'markdown':
+        case "markdown":
           documents = await this.loadMarkdown(filePath, options);
           break;
-        case 'html':
+        case "html":
           documents = await this.loadHTML(filePath, options);
           break;
-        case 'text':
+        case "text":
           documents = await this.loadText(filePath, options);
           break;
-        case 'github':
+        case "github":
           documents = await this.loadGitHub(filePath, options);
           break;
         default:
@@ -146,7 +152,7 @@ export class DocumentLoaderFactory {
 
       const loadTime = Date.now() - startTime;
 
-      this.logger.info('Document loaded successfully', {
+      this.logger.info("Document loaded successfully", {
         fileName,
         fileType,
         documentCount: enrichedDocuments.length,
@@ -162,7 +168,7 @@ export class DocumentLoaderFactory {
         loadTime,
       };
     } catch (error) {
-      this.logger.error('Failed to load document', {
+      this.logger.error("Failed to load document", {
         error: error instanceof Error ? error.message : String(error),
         filePath,
       });
@@ -176,14 +182,13 @@ export class DocumentLoaderFactory {
   public async loadDocuments(
     filePathsOrOptions: (string | LoaderOptions)[]
   ): Promise<LoadedDocument[]> {
-    this.logger.info('Loading multiple documents', {
+    this.logger.info("Loading multiple documents", {
       count: filePathsOrOptions.length,
     });
 
     const results = await Promise.allSettled(
       filePathsOrOptions.map((item) => {
-        const options =
-          typeof item === 'string' ? { filePath: item } : item;
+        const options = typeof item === "string" ? { filePath: item } : item;
         return this.loadDocument(options);
       })
     );
@@ -193,11 +198,11 @@ export class DocumentLoaderFactory {
     const failed: Array<{ path: string; error: string }> = [];
 
     results.forEach((result, index) => {
-      if (result.status === 'fulfilled') {
+      if (result.status === "fulfilled") {
         successful.push(result.value);
       } else {
         const item = filePathsOrOptions[index];
-        const filePath = typeof item === 'string' ? item : item.filePath;
+        const filePath = typeof item === "string" ? item : item.filePath;
         failed.push({
           path: filePath,
           error: result.reason.message || String(result.reason),
@@ -206,13 +211,27 @@ export class DocumentLoaderFactory {
     });
 
     if (failed.length > 0) {
-      this.logger.warn('Some documents failed to load', {
+      this.logger.warn("Some documents failed to load", {
         successCount: successful.length,
         failedCount: failed.length,
         failures: failed,
       });
+      
+      // Check if any failures are critical (rate limits, auth errors, etc.)
+      const hasCriticalError = failed.some(f => 
+        f.error.includes("rate limit") || 
+        f.error.includes("403") ||
+        f.error.includes("401") ||
+        f.error.includes("API")
+      );
+      
+      // If all documents failed OR there's a critical error, throw
+      if (successful.length === 0 || (hasCriticalError && failed.length === filePathsOrOptions.length)) {
+        const errorMessage = failed.map(f => `${f.path}: ${f.error}`).join("; ");
+        throw new Error(`Failed to load documents: ${errorMessage}`);
+      }
     } else {
-      this.logger.info('All documents loaded successfully', {
+      this.logger.info("All documents loaded successfully", {
         count: successful.length,
       });
     }
@@ -224,7 +243,7 @@ export class DocumentLoaderFactory {
    * Get supported file extensions
    */
   public static getSupportedExtensions(): string[] {
-    return ['.pdf', '.md', '.markdown', '.html', '.htm', '.txt'];
+    return [".pdf", ".md", ".markdown", ".html", ".htm", ".txt"];
   }
 
   /**
@@ -241,10 +260,15 @@ export class DocumentLoaderFactory {
   }
 
   /**
-   * Check if a path is a GitHub repository URL
+   * Check if a path is a GitHub repository URL (GitHub.com or Enterprise)
    */
   public static isGitHubUrl(url: string): boolean {
-    return /^https?:\/\/github\.com\/[\w-]+\/[\w.-]+/.test(url);
+    // Match repository URLs with pattern: https://domain/owner/repo
+    // Works for:
+    // - github.com/owner/repo
+    // - github.company.com/owner/repo (GitHub Enterprise)
+    // - any custom GitHub Enterprise domain
+    return /^https?:\/\/[a-zA-Z0-9.-]+\/[\w-]+\/[\w.-]+/.test(url);
   }
 
   // ==================== Private Methods ====================
@@ -266,26 +290,26 @@ export class DocumentLoaderFactory {
   private detectFileType(filePath: string): SupportedFileType {
     // Check if it's a GitHub URL
     if (DocumentLoaderFactory.isGitHubUrl(filePath)) {
-      return 'github';
+      return "github";
     }
 
     const ext = path.extname(filePath).toLowerCase();
 
     switch (ext) {
-      case '.pdf':
-        return 'pdf';
-      case '.md':
-      case '.markdown':
-        return 'markdown';
-      case '.html':
-      case '.htm':
-        return 'html';
-      case '.txt':
-        return 'text';
+      case ".pdf":
+        return "pdf";
+      case ".md":
+      case ".markdown":
+        return "markdown";
+      case ".html":
+      case ".htm":
+        return "html";
+      case ".txt":
+        return "text";
       default:
         // Default to text for unknown extensions
-        this.logger.warn('Unknown file extension, treating as text', { ext });
-        return 'text';
+        this.logger.warn("Unknown file extension, treating as text", { ext });
+        return "text";
     }
   }
 
@@ -296,31 +320,35 @@ export class DocumentLoaderFactory {
     filePath: string,
     options: LoaderOptions
   ): Promise<LangChainDocument[]> {
-    this.logger.debug('Loading PDF', { filePath });
+    this.logger.debug("Loading PDF", { filePath });
 
     const loader = new PDFLoader(filePath, {
       // Don't split pages by default - we'll handle chunking separately
       splitPages: options.splitPages ?? false,
       // Use newline separator for better text extraction
-      parsedItemSeparator: options.parsedItemSeparator ?? '\n',
+      parsedItemSeparator: options.parsedItemSeparator ?? "\n",
     });
 
     try {
       // @ts-ignore - LangChain v1 type compat
       const documents = await loader.load();
 
-      this.logger.debug('PDF loaded', {
+      this.logger.debug("PDF loaded", {
         filePath,
         pageCount: documents.length,
       });
 
       return documents;
     } catch (error) {
-      this.logger.error('Failed to load PDF', {
+      this.logger.error("Failed to load PDF", {
         error: error instanceof Error ? error.message : String(error),
         filePath,
       });
-      throw new Error(`Failed to load PDF: ${error instanceof Error ? error.message : String(error)}`);
+      throw new Error(
+        `Failed to load PDF: ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      );
     }
   }
 
@@ -332,7 +360,7 @@ export class DocumentLoaderFactory {
     filePath: string,
     options: LoaderOptions
   ): Promise<LangChainDocument[]> {
-    this.logger.debug('Loading Markdown', { filePath });
+    this.logger.debug("Loading Markdown", { filePath });
 
     const loader = new TextLoader(filePath);
 
@@ -345,18 +373,22 @@ export class DocumentLoaderFactory {
         doc.metadata.preserveStructure = true;
       });
 
-      this.logger.debug('Markdown loaded', {
+      this.logger.debug("Markdown loaded", {
         filePath,
         documentCount: documents.length,
       });
 
       return documents;
     } catch (error) {
-      this.logger.error('Failed to load Markdown', {
+      this.logger.error("Failed to load Markdown", {
         error: error instanceof Error ? error.message : String(error),
         filePath,
       });
-      throw new Error(`Failed to load Markdown: ${error instanceof Error ? error.message : String(error)}`);
+      throw new Error(
+        `Failed to load Markdown: ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      );
     }
   }
 
@@ -367,11 +399,11 @@ export class DocumentLoaderFactory {
     filePath: string,
     options: LoaderOptions
   ): Promise<LangChainDocument[]> {
-    this.logger.debug('Loading HTML', { filePath });
+    this.logger.debug("Loading HTML", { filePath });
 
     try {
       // Read file as text first
-      const htmlContent = await fs.readFile(filePath, 'utf-8');
+      const htmlContent = await fs.readFile(filePath, "utf-8");
 
       // Create a file:// URL for the loader
       const fileUrl = `file://${path.resolve(filePath)}`;
@@ -379,18 +411,18 @@ export class DocumentLoaderFactory {
       // Use CheerioWebBaseLoader with custom HTML content
       // Note: We need to use a workaround since CheerioWebBaseLoader expects URLs
       // We'll create a simple document directly
-      const cheerio = require('cheerio');
+      const cheerio = require("cheerio");
       const $ = cheerio.load(htmlContent);
 
       // Extract text content, removing script and style tags
-      $('script, style').remove();
+      $("script, style").remove();
 
       // Use selector if provided, otherwise get all text
-      const selector = options.selector || 'body';
+      const selector = options.selector || "body";
       const text = $(selector).text().trim();
 
       // Extract title if available
-      const title = $('title').text().trim() || path.basename(filePath);
+      const title = $("title").text().trim() || path.basename(filePath);
 
       const document = new LangChainDocument({
         pageContent: text,
@@ -401,7 +433,7 @@ export class DocumentLoaderFactory {
         },
       });
 
-      this.logger.debug('HTML loaded', {
+      this.logger.debug("HTML loaded", {
         filePath,
         textLength: text.length,
         title,
@@ -409,11 +441,15 @@ export class DocumentLoaderFactory {
 
       return [document];
     } catch (error) {
-      this.logger.error('Failed to load HTML', {
+      this.logger.error("Failed to load HTML", {
         error: error instanceof Error ? error.message : String(error),
         filePath,
       });
-      throw new Error(`Failed to load HTML: ${error instanceof Error ? error.message : String(error)}`);
+      throw new Error(
+        `Failed to load HTML: ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      );
     }
   }
 
@@ -424,25 +460,29 @@ export class DocumentLoaderFactory {
     filePath: string,
     options: LoaderOptions
   ): Promise<LangChainDocument[]> {
-    this.logger.debug('Loading text', { filePath });
+    this.logger.debug("Loading text", { filePath });
 
     const loader = new TextLoader(filePath);
 
     try {
       const documents = await loader.load();
 
-      this.logger.debug('Text loaded', {
+      this.logger.debug("Text loaded", {
         filePath,
         documentCount: documents.length,
       });
 
       return documents;
     } catch (error) {
-      this.logger.error('Failed to load text', {
+      this.logger.error("Failed to load text", {
         error: error instanceof Error ? error.message : String(error),
         filePath,
       });
-      throw new Error(`Failed to load text: ${error instanceof Error ? error.message : String(error)}`);
+      throw new Error(
+        `Failed to load text: ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      );
     }
   }
 
@@ -457,34 +497,99 @@ export class DocumentLoaderFactory {
     repoUrl: string,
     options: LoaderOptions
   ): Promise<LangChainDocument[]> {
-    this.logger.debug('Loading GitHub repository', { repoUrl });
+    this.logger.debug("Loading GitHub repository", {
+      repoUrl,
+      branch: options.branch || "main",
+      recursive: options.recursive,
+      ignorePaths: options.ignorePaths,
+      hasAccessToken: !!options.accessToken,
+    });
 
     try {
+      // Extract base URL and API URL for GitHub Enterprise support
+      const urlObj = new URL(repoUrl);
+      const baseUrl = `${urlObj.protocol}//${urlObj.host}`;
+      
+      // Determine API URL based on host
+      // For GitHub.com, use api.github.com
+      // For GitHub Enterprise, use the same host with /api/v3
+      const apiUrl = urlObj.host === "github.com" 
+        ? "https://api.github.com"
+        : `${baseUrl}/api/v3`;
+
+      this.logger.debug("GitHub configuration", {
+        baseUrl,
+        apiUrl,
+        host: urlObj.host,
+      });
+
+      this.logger.info("Starting GitHub repository load - this may take a while for large repositories...", {
+        repoUrl,
+        branch: options.branch || "main",
+      });
+
+      const startTime = Date.now();
+
       const loader = new GithubRepoLoader(repoUrl, {
-        branch: options.branch || 'main',
+        baseUrl,
+        apiUrl,
+        branch: options.branch || "main",
         recursive: options.recursive ?? true,
-        unknown: 'warn' as const,
+        unknown: "warn" as const,
         ignorePaths: options.ignorePaths,
         accessToken: options.accessToken || process.env.GITHUB_ACCESS_TOKEN,
-        maxConcurrency: options.maxConcurrency || 2,
+        maxConcurrency: options.maxConcurrency || 10,
         processSubmodules: options.processSubmodules ?? false,
+        verbose: true, // Enable verbose logging to see progress
       });
 
-      const documents = await loader.load();
+      // Add periodic progress logging
+      const progressInterval = setInterval(() => {
+        this.logger.info("Still loading GitHub repository...", {
+          repoUrl,
+          elapsed: `${Math.floor((Date.now() - startTime) / 1000)}s`,
+        });
+      }, 10000); // Log every 10 seconds
 
-      this.logger.debug('GitHub repository loaded', {
-        repoUrl,
-        documentCount: documents.length,
-        branch: options.branch || 'main',
-      });
+      try {
+        const documents = await loader.load();
+        clearInterval(progressInterval);
 
-      return documents;
+        this.logger.info("GitHub repository loaded successfully", {
+          repoUrl,
+          documentCount: documents.length,
+          branch: options.branch || "main",
+          totalContentLength: documents.reduce(
+            (sum, doc) => sum + doc.pageContent.length,
+            0
+          ),
+          fileSources: documents.slice(0, 5).map((doc) => doc.metadata.source),
+        });
+
+        // Log warning if no documents loaded
+        if (documents.length === 0) {
+          this.logger.warn("GitHub repository loaded but no documents found", {
+            repoUrl,
+            branch: options.branch || "main",
+            recursive: options.recursive,
+            ignorePaths: options.ignorePaths,
+            suggestion:
+              "Check if repository is empty, branch exists, or ignorePaths is too restrictive",
+          });
+        }
+
+        return documents;
+      } finally {
+        clearInterval(progressInterval);
+      }
     } catch (error) {
-      this.logger.error('Failed to load GitHub repository', {
+      this.logger.error("Failed to load GitHub repository", {
         error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
         repoUrl,
+        branch: options.branch,
       });
-      throw new Error(`Failed to load GitHub repository: ${error instanceof Error ? error.message : String(error)}`);
+      throw error;
     }
   }
 }
