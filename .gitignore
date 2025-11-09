@@ -1,6 +1,8 @@
 # Compiled output
 out/
+dist/
 *.js
+!esbuild.js
 *.js.map
 !test/fixtures/**
 !scripts/**

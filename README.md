@@ -20,13 +20,14 @@
 - **Iterative Refinement**: Confidence-based iteration for high-quality results
 - **Parallel/Sequential Execution**: Smart execution strategy based on query complexity
 
-### 🔍 **Hybrid Retrieval**
+### 🔍 **Multiple Retrieval Strategies**
 
-- **Vector Search**: Semantic similarity using embeddings
-- **Keyword Search**: BM25-like scoring with TF-IDF
-- **Fusion Strategy**: Configurable weights (default: 70% vector, 30% keyword)
+- **Hybrid Search** (recommended): Combines vector + keyword (70%/30% weights, configurable)
+- **Vector Search**: Pure semantic similarity using embeddings
+- **Ensemble Search**: Advanced RRF (Reciprocal Rank Fusion) with BM25 for highest accuracy
+- **BM25 Search**: Pure keyword search using Okapi BM25 algorithm (no embeddings needed)
 - **Position Boosting**: Keywords near document start weighted higher
-- **Result Explanations**: Human-readable scoring breakdown
+- **Result Explanations**: Human-readable scoring breakdown for all strategies
 
 ### 📚 **Document Processing**
 
@@ -39,9 +40,10 @@
 
 ### 💾 **Vector Storage**
 
-- **FAISS Support**: High-performance vector search with HNSW indexing
-- **Memory Fallback**: Automatic graceful degradation
+- **LanceDB**: Embedded vector database with file-based persistence (no server needed)
+- **Cross-Platform**: Works on Windows, macOS, Linux, and ARM
 - **Per-Topic Stores**: Efficient isolation and management
+- **Serverless**: Truly embedded, like SQLite for vectors
 - **Caching**: Optimized loading and reuse
 
 ### 🎨 **Enhanced UI**
@@ -202,28 +204,15 @@ The RAG tool will:
   // Chunk overlap for context preservation
   "ragnarok.chunkOverlap": 50,
 
-  // Embedding model to use
-  "ragnarok.embeddingModel": "text-embedding-3-small",
+  // Embedding model to use (local Transformers.js models)
+  "ragnarok.embeddingModel": "Xenova/all-MiniLM-L6-v2",
 
-  // GitHub Personal Access Token for private repositories
-  "ragnarok.githubAccessToken": ""
+  // Retrieval strategy
+  "ragnarok.retrievalStrategy": "hybrid"
 }
 ```
 
-**GitHub Access Token Setup:**
-
-To access private repositories, you need to configure a Personal Access Token (PAT):
-
-1. Go to GitHub → Settings → Developer settings → [Personal access tokens](https://github.com/settings/tokens)
-2. Click "Generate new token (classic)"
-3. Select scope: `repo` (Full control of private repositories)
-4. Copy the generated token
-5. Add to VS Code settings:
-   - **Option 1**: `Preferences: Open Settings (JSON)` → Add `"ragnarok.githubAccessToken": "your_token_here"`
-   - **Option 2**: `Preferences: Open Settings (UI)` → Search "ragnarok github" → Paste token
-   - **Option 3**: Set environment variable `GITHUB_ACCESS_TOKEN`
-
-The extension will use the configured token automatically when loading repositories.
+**Note**: GitHub access tokens are now managed via secure Secret Storage, not settings.json. See [GitHub Token Management](#github-token-management) section.
 
 ### Agentic Mode Settings
 
@@ -233,27 +222,37 @@ The extension will use the configured token automatically when loading repositor
   "ragnarok.useAgenticMode": true,
 
   // Use LLM for query planning (requires Copilot)
-  "ragnarok.agentic.useLLM": true,
-
-  // Retrieval strategy: "hybrid", "vector", or "keyword"
-  "ragnarok.agentic.retrievalStrategy": "hybrid",
+  "ragnarok.agenticUseLLM": false,
 
   // Maximum refinement iterations
-  "ragnarok.agentic.maxIterations": 3,
+  "ragnarok.agenticMaxIterations": 3,
 
   // Confidence threshold (0-1) for stopping iteration
-  "ragnarok.agentic.confidenceThreshold": 0.7,
+  "ragnarok.agenticConfidenceThreshold": 0.7,
 
   // Enable iterative refinement
-  "ragnarok.agentic.iterativeRefinement": true,
+  "ragnarok.agenticIterativeRefinement": true,
 
-  // LLM model for planning
-  "ragnarok.agentic.llmModel": "gpt-4o",
+  // LLM model for planning (when agenticUseLLM is true)
+  "ragnarok.agenticLLMModel": "gpt-4o",
 
   // Include workspace context in queries
-  "ragnarok.agentic.includeWorkspaceContext": true
+  "ragnarok.agenticIncludeWorkspaceContext": true
 }
 ```
+
+**Available Embedding Models** (local, no API needed):
+
+- `Xenova/all-MiniLM-L6-v2` (default) - Fast, 384 dimensions
+- `Xenova/all-MiniLM-L12-v2` - More accurate, 384 dimensions
+- `Xenova/paraphrase-MiniLM-L6-v2` - Optimized for paraphrasing
+- `Xenova/multi-qa-MiniLM-L6-cos-v1` - Optimized for Q&A
+
+**LLM Models** (for agentic planning when enabled):
+
+- `gpt-4o` (default) - Most intelligent
+- `gpt-4o-mini` - Faster, still capable
+- `gpt-3.5-turbo` - Fastest, most economical
 
 ---
 
@@ -288,7 +287,8 @@ The extension will use the configured token automatically when loading repositor
 │    │         │                    │          │      │
 │  ┌─┴─────────┴────┐          ┌────┴──────────┴────┐ │
 │  │ Embedding      │          │ Vector Store       │ │
-│  │ Service        │          │ (FAISS/Memory)     │ │
+│  │ Service        │          │ (LanceDB)          │ │
+│  │ (Local Models) │          │ (Embedded DB)      │ │
 │  └────────────────┘          └────────────────────┘ │
 │                                                     │
 └─────────────────────────────────────────────────────┘
@@ -338,10 +338,10 @@ The extension will use the configured token automatically when loading repositor
 
 #### **VectorStoreFactory** (`stores/vectorStoreFactory.ts`)
 
-- FAISS and Memory vector store support
-- Automatic fallback handling
-- Persistence and caching
-- Store lifecycle management
+- LanceDB embedded vector database
+- File-based persistence (no external server)
+- Per-topic vector stores
+- Store lifecycle management and caching
 
 #### **DocumentLoaderFactory** (`loaders/documentLoaderFactory.ts`)
 
@@ -371,7 +371,7 @@ const topicManager = TopicManager.getInstance();
 const topic = await topicManager.createTopic({
   name: "My Topic",
   description: "Optional description",
-  embeddingModel: "text-embedding-3-small", // optional
+  embeddingModel: "Xenova/all-MiniLM-L6-v2", // optional, uses local model
 });
 
 // Add documents
@@ -508,14 +508,14 @@ User uploads: document1.pdf, document2.md
     ↓
 ┌───┴────────────────────────────────────────┐
 │ 3. Embedding Generation (Batched)          │
-│    Model: text-embedding-3-small           │
+│    Model: Xenova/all-MiniLM-L6-v2 (local)  │
 │    Batch size: 32 chunks                   │
-│    → Generates 1536-dim vectors            │
+│    → Generates 384-dim vectors             │
 └───┬────────────────────────────────────────┘
     ↓
 ┌───┴────────────────────────────────────────┐
 │ 4. Vector Storage                          │
-│    Auto-select: FAISS (>1000) or Memory    │
+│    LanceDB embedded database               │
 │    → Stores embeddings + metadata          │
 └───┬────────────────────────────────────────┘
     ↓
@@ -528,62 +528,24 @@ Complete: Documents ready for retrieval
 
 ### Benchmarks (M1 Mac, 16GB RAM)
 
-| Operation                       | Time   | Notes                  |
-| ------------------------------- | ------ | ---------------------- |
-| Load PDF (10 pages)             | ~2s    | Using PDFLoader        |
-| Chunk document (50 chunks)      | ~100ms | Semantic chunking      |
-| Generate embeddings (50 chunks) | ~5s    | Batched, local model   |
-| Store in FAISS                  | ~50ms  | Including save to disk |
-| Hybrid search (k=5)             | ~100ms | Vector + keyword       |
-| Query planning (LLM)            | ~2s    | GPT-4o via Copilot     |
-| Query planning (heuristic)      | <10ms  | Rule-based             |
+| Operation                       | Time   | Notes                       |
+| ------------------------------- | ------ | --------------------------- |
+| Load PDF (10 pages)             | ~2s    | Using PDFLoader             |
+| Chunk document (50 chunks)      | ~100ms | Semantic chunking           |
+| Generate embeddings (50 chunks) | ~3-5s  | Local Transformers.js model |
+| Store in LanceDB                | ~100ms | File-based persistence      |
+| Hybrid search (k=5)             | ~50ms  | Vector + BM25               |
+| Query planning (LLM)            | ~2s    | GPT-4o via Copilot          |
+| Query planning (heuristic)      | <10ms  | Rule-based                  |
 
 ### Optimization Tips
 
-1. **Use FAISS for large datasets** (>1000 chunks)
+1. **Use local embeddings** for privacy and no API costs
 2. **Enable agent caching** (automatic per topic)
 3. **Adjust chunk size** based on document type
 4. **Use simple mode** for fast queries
 5. **Batch document uploads** for efficiency
-
----
-
-## 🐛 Troubleshooting
-
-### Common Issues
-
-#### Extension not activating
-
-```
-Check: VS Code version ≥ 1.90
-Check: Output → RAGnarōk for logs
-Solution: Reload window (Cmd/Ctrl+R)
-```
-
-#### No embeddings generated
-
-```
-Check: Internet connection (for downloading model)
-Check: Disk space (model cache ~200MB)
-Solution: Clear cache and retry
-```
-
-#### Slow query performance
-
-```
-Check: Vector store type (use FAISS for >1000 chunks)
-Check: Agentic mode settings (disable if not needed)
-Solution: Adjust topK and confidence threshold
-```
-
-#### RAG tool not visible in Copilot
-
-```
-Check: GitHub Copilot extension installed
-Check: Copilot subscription active
-Check: VS Code version ≥ 1.90
-Solution: Restart VS Code
-```
+6. **LanceDB scales well** - no size limits like in-memory stores
 
 ---
 
@@ -616,25 +578,6 @@ npm install
 npm run watch  # Watch mode for development
 ```
 
-### Project Structure
-
-```
-src/
-├── agents/         # Agentic RAG components
-├── retrievers/     # Retrieval strategies
-├── managers/       # High-level managers
-├── loaders/        # Document loaders
-├── splitters/      # Text splitters
-├── stores/         # Vector stores
-├── utils/          # Utilities (Logger, etc.)
-├── commands.ts     # VS Code commands
-├── extension.ts    # Extension entry point
-├── ragTool.ts      # Copilot tool
-└── topicTreeView.ts # Tree view provider
-```
-
----
-
 ## 📄 License
 
 MIT License - see [LICENSE](LICENSE) for details
@@ -647,17 +590,9 @@ Built with:
 
 - [LangChain.js](https://js.langchain.com/) - Document processing framework
 - [Transformers.js](https://huggingface.co/docs/transformers.js) - Local embeddings
-- [FAISS](https://github.com/facebookresearch/faiss) - Vector search
+- [LanceDB](https://lancedb.github.io/lancedb/) - Embedded vector database
 - [VS Code Extension API](https://code.visualstudio.com/api) - Extension platform
-
----
-
-## 📞 Support
-
-- 📧 Email: support@example.com
-- 💬 Discord: [Join our community](https://discord.gg/example)
-- 🐛 Issues: [GitHub Issues](https://github.com/hyorman/ragnarok/issues)
-- 📖 Docs: [Full documentation](https://ragnarok.dev/docs)
+- [VS Code LM API](https://code.visualstudio.com/api/extension-guides/language-model) - Copilot integration
 
 ---
 
