@@ -32,6 +32,13 @@ const PLATFORM_PACKAGE_CONFIGS = [
     description: 'Sharp',
     expectedCount: 6,
     sources: ['dependencies', 'optionalDependencies']
+  },
+  {
+    scope: '@img',
+    prefix: 'sharp-libvips-',
+    description: 'Sharp libvips',
+    expectedCount: 6,
+    sources: ['dependencies', 'optionalDependencies']
   }
 ];
 
