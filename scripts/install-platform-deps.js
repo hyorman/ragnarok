@@ -23,7 +23,7 @@ const PLATFORM_PACKAGE_CONFIGS = [
     scope: '@lancedb',
     prefix: 'lancedb-',
     description: 'LanceDB',
-    expectedCount: 8,
+    expectedCount: 6,
     sources: ['dependencies', 'optionalDependencies']
   },
   {
