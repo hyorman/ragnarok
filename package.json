@@ -332,15 +332,15 @@
     "watch": "tsc -watch -p ./",
     "watch:tests": "tsc -watch -p ./tsconfig.test.json",
     "lint": "eslint src --ext ts",
-    "package": "npm run package:all",
-    "package:dev": "vsce package",
+    "prepackage": "node scripts/install-platform-deps.js",
+    "package:dev": "npm run prepackage && vsce package",
+    "package": "npm run prepackage && npm run package:win32-x64 && npm run package:win32-arm64 && npm run package:darwin-x64 && npm run package:darwin-arm64 && npm run package:linux-x64 && npm run package:linux-arm64",
     "package:win32-x64": "vsce package --target win32-x64",
     "package:win32-arm64": "vsce package --target win32-arm64",
     "package:darwin-x64": "vsce package --target darwin-x64",
     "package:darwin-arm64": "vsce package --target darwin-arm64",
     "package:linux-x64": "vsce package --target linux-x64",
     "package:linux-arm64": "vsce package --target linux-arm64",
-    "package:all": "npm run package:win32-x64 && npm run package:win32-arm64 && npm run package:darwin-x64 && npm run package:darwin-arm64 && npm run package:linux-x64 && npm run package:linux-arm64",
     "pretest": "npm run compile && npm run compile:tests",
     "test": "node ./out/test/test/runTest.js",
     "inspect:chunks": "npm run compile && node scripts/inspect-chunks.js",
@@ -373,12 +373,18 @@
     "langchain": "^1.0.0"
   },
   "optionalDependencies": {
-    "@img/sharp-darwin-arm64": "^0.33.5",
-    "@img/sharp-darwin-x64": "^0.33.5",
-    "@img/sharp-linux-arm64": "^0.33.5",
-    "@img/sharp-linux-x64": "^0.33.5",
-    "@img/sharp-win32-ia32": "^0.33.5",
-    "@img/sharp-win32-x64": "^0.33.5"
+    "@lancedb/lancedb-darwin-x64": "^0.19.1",
+    "@lancedb/lancedb-darwin-arm64": "^0.19.1",
+    "@lancedb/lancedb-linux-x64-gnu": "^0.19.1",
+    "@lancedb/lancedb-linux-arm64-gnu": "^0.19.1",
+    "@lancedb/lancedb-win32-x64-msvc": "^0.19.1",
+    "@lancedb/lancedb-win32-arm64-msvc": "^0.19.1",
+    "@img/sharp-darwin-x64": "^0.34.5",
+    "@img/sharp-darwin-arm64": "^0.34.5",
+    "@img/sharp-linux-x64": "^0.34.5",
+    "@img/sharp-linux-arm64": "^0.34.5",
+    "@img/sharp-win32-x64": "^0.34.5",
+    "@img/sharp-win32-arm64": "^0.34.5"
   },
   "overrides": {
     "fsevents": {
