@@ -10,6 +10,10 @@ src/**
 **/*.ts
 **/*.map
 
+# assets
+assets/**
+!assets/icon.png
+
 # Configuration files
 .gitignore
 .yarnrc
@@ -35,6 +39,7 @@ node_modules/**
 !node_modules/decamelize/**
 !node_modules/ml-distance/**
 !node_modules/ml-distance-euclidean/**
+!node_modules/ignore/**
 
 # LanceDB vector database (embedded, with platform-specific native binaries)
 !node_modules/@lancedb/**
