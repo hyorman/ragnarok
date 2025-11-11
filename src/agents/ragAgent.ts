@@ -10,6 +10,7 @@ import * as vscode from 'vscode';
 import { VectorStore } from '@langchain/core/vectorstores';
 import { Document as LangChainDocument } from '@langchain/core/documents';
 import { QueryPlannerAgent, QueryPlan, SubQuery, RefinementContext } from './queryPlannerAgent';
+import { ResultEvaluatorAgent, EvaluationResult } from './resultEvaluatorAgent';
 import { HybridRetriever, HybridSearchResult } from '../retrievers/hybridRetriever';
 import { EnsembleRetrieverWrapper, EnsembleSearchResult } from '../retrievers/ensembleRetriever';
 import { BM25RetrieverWrapper, BM25SearchResult } from '../retrievers/bm25Retriever';
@@ -88,6 +89,7 @@ export interface RAGResult {
 export class RAGAgent {
   private logger: Logger;
   private queryPlanner: QueryPlannerAgent;
+  private resultEvaluator: ResultEvaluatorAgent;
   private retriever: HybridRetriever | null = null;
   private ensembleRetriever: EnsembleRetrieverWrapper | null = null;
   private bm25Retriever: BM25RetrieverWrapper | null = null;
@@ -96,6 +98,7 @@ export class RAGAgent {
   constructor() {
     this.logger = new Logger('RAGAgent');
     this.queryPlanner = new QueryPlannerAgent();
+    this.resultEvaluator = new ResultEvaluatorAgent();
     this.logger.info('RAGAgent initialized');
   }
 
@@ -403,7 +406,7 @@ export class RAGAgent {
   }
 
   /**
-   * Iterative retrieval with confidence checking
+   * Iterative retrieval with confidence checking and result evaluation
    */
   private async iterativeRetrieval(
     initialPlan: QueryPlan,
@@ -419,10 +422,12 @@ export class RAGAgent {
     let iterations = 0;
     const maxIter = options.maxIterations;
     const threshold = options.confidenceThreshold;
+    const originalQuery = initialPlan.originalQuery;
 
     this.logger.debug('Starting iterative retrieval', {
       maxIterations: maxIter,
       threshold,
+      originalQuery: originalQuery.substring(0, 100),
     });
 
     while (iterations < maxIter) {
@@ -432,53 +437,73 @@ export class RAGAgent {
       const iterResults = await this.executeRetrieval(currentPlan, options);
       allResults.push(...iterResults);
 
-      // Calculate confidence
-      const avgConfidence = this.calculateAvgConfidence(allResults);
+      // Deduplicate results so far
+      const uniqueResults = this.deduplicateResults(allResults);
 
-      this.logger.debug('Iteration complete', {
-        iteration: iterations,
-        resultCount: iterResults.length,
-        avgConfidence,
+      // Evaluate results using ResultEvaluatorAgent
+      const evaluation = await this.resultEvaluator.evaluate(uniqueResults, {
+        originalQuery,
+        queryPlan: currentPlan,
+        confidenceThreshold: threshold,
+        minResults: options.topK,
+        useLLM: options.useLLM,
+        topicName: options.topicName,
+        workspaceContext: options.workspaceContext,
+        currentIteration: iterations,
+        maxIterations: maxIter,
       });
 
-      // Check if confidence threshold met
-      if (avgConfidence >= threshold) {
-        this.logger.info('Confidence threshold met', {
-          avgConfidence,
+      this.logger.debug('Iteration evaluation complete', {
+        iteration: iterations,
+        resultCount: iterResults.length,
+        uniqueResultCount: uniqueResults.length,
+        evaluation: {
+          isSufficient: evaluation.isSufficient,
+          confidence: evaluation.confidence,
+          shouldRetry: evaluation.shouldRetry,
+          improvementStrategy: evaluation.improvementStrategy,
+        },
+      });
+
+      // Check if results are sufficient
+      if (evaluation.isSufficient || evaluation.confidence >= threshold) {
+        this.logger.info('Results are sufficient', {
+          avgConfidence: evaluation.confidence,
           threshold,
           iterations,
+          reasoning: evaluation.reasoning,
         });
         return {
-          results: allResults,
+          results: uniqueResults,
           iterations,
-          avgConfidence,
+          avgConfidence: evaluation.confidence,
           confidenceMet: true,
         };
       }
 
-      // Check if we should continue
-      if (iterations >= maxIter) {
-        this.logger.info('Max iterations reached', {
+      // Check if we should retry
+      if (!evaluation.shouldRetry || iterations >= maxIter) {
+        this.logger.info('Stopping iteration', {
           iterations,
-          avgConfidence,
+          shouldRetry: evaluation.shouldRetry,
+          maxIterations: maxIter,
+          reasoning: evaluation.reasoning,
         });
         break;
       }
 
       // Refine query plan for next iteration
       try {
-        // Build refinement context
-        const refinementContext = {
-          currentResults: allResults.map(r => ({
+        // Build refinement context from evaluation results
+        const refinementContext: RefinementContext = {
+          currentResults: uniqueResults.map(r => ({
             content: r.document.pageContent,
             score: r.score,
             metadata: r.document.metadata,
           })),
           executedQueries: currentPlan.subQueries.map(sq => sq.query),
-          avgConfidence,
-          uniqueDocCount: new Set(
-            allResults.map(r => r.document.metadata.chunkId || r.document.pageContent.substring(0, 50))
-          ).size,
+          avgConfidence: evaluation.confidence,
+          uniqueDocCount: uniqueResults.length,
           confidenceThreshold: threshold,
         };
 
@@ -496,15 +521,37 @@ export class RAGAgent {
         );
 
         if (!refinedPlan || refinedPlan.subQueries.length === 0) {
-          this.logger.info('No refinement needed, stopping iteration');
-          break;
+          // Fallback: If refinePlan returns null, try using evaluation suggestions
+          if (evaluation.suggestedQuery && evaluation.suggestedQuery !== originalQuery) {
+            this.logger.info('Using evaluation suggested query as fallback', {
+              suggestedQuery: evaluation.suggestedQuery.substring(0, 100),
+            });
+            const refinedOptions: Required<RAGAgentOptions> = {
+              ...options,
+              maxIterations: maxIter - iterations,
+            };
+            currentPlan = await this.createQueryPlan(evaluation.suggestedQuery, refinedOptions);
+          } else if (evaluation.gaps && evaluation.gaps.length > 0) {
+            const refinedQuery = this.buildQueryFromGaps(originalQuery, evaluation.gaps);
+            this.logger.info('Building query from gaps as fallback', {
+              refinedQuery: refinedQuery.substring(0, 100),
+              gaps: evaluation.gaps,
+            });
+            const gapRefinedOptions: Required<RAGAgentOptions> = {
+              ...options,
+              maxIterations: maxIter - iterations,
+            };
+            currentPlan = await this.createQueryPlan(refinedQuery, gapRefinedOptions);
+          } else {
+            this.logger.info('No refinement needed, stopping iteration');
+            break;
+          }
+        } else {
+          this.logger.debug('Query plan refined', {
+            newSubQueries: refinedPlan.subQueries.length,
+          });
+          currentPlan = refinedPlan;
         }
-
-        this.logger.debug('Query plan refined', {
-          newSubQueries: refinedPlan.subQueries.length,
-        });
-
-        currentPlan = refinedPlan;
       } catch (error) {
         this.logger.error('Failed to refine query plan', {
           error: error instanceof Error ? error.message : String(error),
@@ -513,14 +560,33 @@ export class RAGAgent {
       }
     }
 
-    const avgConfidence = this.calculateAvgConfidence(allResults);
+    // Final deduplication and confidence calculation
+    const finalResults = this.deduplicateResults(allResults);
+    const avgConfidence = this.calculateAvgConfidence(finalResults);
+
+    this.logger.info('Iterative retrieval completed', {
+      iterations,
+      finalResultCount: finalResults.length,
+      avgConfidence,
+      confidenceMet: avgConfidence >= threshold,
+    });
 
     return {
-      results: allResults,
+      results: finalResults,
       iterations,
       avgConfidence,
       confidenceMet: avgConfidence >= threshold,
     };
+  }
+
+  /**
+   * Build a refined query from identified gaps
+   */
+  private buildQueryFromGaps(originalQuery: string, gaps: string[]): string {
+    // Simple heuristic: append gap information to query
+    // In a more sophisticated implementation, this could use LLM to create a better query
+    const gapContext = gaps.join(', ');
+    return `${originalQuery} ${gapContext}`;
   }
 
   /**
