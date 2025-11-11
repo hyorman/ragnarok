@@ -117,36 +117,8 @@ export class HybridRetriever {
           options.keywordBoosting
         );
 
-        // Handle LanceDB distance/similarity score normalization
-        // LangChain's LanceDB returns undefined score but stores L2 distance in metadata
-        let normalizedVectorScore: number;
-        
-        // First, get the actual distance value
-        let distance: number | undefined = vectorScore;
-        if (distance === undefined || isNaN(distance)) {
-          // LanceDB stores the actual distance in metadata._distance
-          distance = doc.metadata?._distance;
-        }
-        
-        if (distance === undefined || isNaN(distance)) {
-          // No distance available - use neutral score for keyword-only ranking
-          normalizedVectorScore = 0.5;
-          this.logger.debug('No distance score available, using neutral score');
-        } else if (distance < 0) {
-          // Negative distances can occur with dot product similarity
-          // Convert to similarity: smaller absolute distance = higher similarity
-          normalizedVectorScore = 1 / (1 + Math.abs(distance));
-        } else if (distance <= 2.0) {
-          // Small positive values likely indicate cosine similarity (0-2 range)
-          // where 0 = identical, 2 = opposite
-          // Convert to similarity score: 0 distance → 1.0 similarity, 2 distance → 0.0 similarity
-          normalizedVectorScore = Math.max(0, 1 - (distance / 2));
-        } else {
-          // Large positive values indicate L2/Euclidean distance
-          // Convert distance to similarity: smaller distance = higher similarity
-          // Using formula: similarity = 1 / (1 + distance)
-          normalizedVectorScore = 1 / (1 + distance);
-        }
+        // Normalize vector score from distance metric to similarity score (0-1)
+        const normalizedVectorScore = this.normalizeVectorScore(vectorScore, doc);
 
         // Calculate hybrid score as weighted combination
         const hybridScore =
@@ -206,8 +178,8 @@ export class HybridRetriever {
 
       return results.map(([doc, score]) => ({
         document: doc,
-        score,
-        vectorScore: score,
+        score: this.normalizeVectorScore(score, doc),
+        vectorScore: this.normalizeVectorScore(score, doc),
         keywordScore: 0,
       }));
     } catch (error) {
@@ -262,6 +234,58 @@ export class HybridRetriever {
   }
 
   // ==================== Private Methods ====================
+
+  /**
+   * Normalize vector distance/similarity score to a consistent similarity score (0-1)
+   *
+   * Handles different distance metrics returned by vector stores:
+   * - Cosine distance: Range 0-2, where 0 = identical, 2 = opposite
+   * - L2/Euclidean distance: Range 0+, where smaller = more similar
+   * - Dot product: Can be negative, where larger = more similar
+   * - Missing/undefined: Falls back to neutral score (0.5)
+   *
+   * @param vectorScore - The raw score from vector store (may be distance or similarity)
+   * @param doc - The document with potential metadata containing distance
+   * @returns Normalized similarity score between 0 and 1 (higher = more similar)
+   */
+  private normalizeVectorScore(
+    vectorScore: number | undefined,
+    doc: LangChainDocument
+  ): number {
+    // First, get the actual distance value
+    // LanceDB may store distance in metadata._distance instead of returning it
+    let distance: number | undefined = vectorScore;
+    if (distance === undefined || isNaN(distance)) {
+      distance = doc.metadata?._distance;
+    }
+
+    // Handle missing or invalid distance
+    if (distance === undefined || isNaN(distance)) {
+      this.logger.debug('No distance score available, using neutral score');
+      return 0.5; // Neutral score allows keyword-only ranking to work
+    }
+
+    // Handle negative distances (dot product similarity)
+    // Negative values indicate similarity, where more negative = less similar
+    if (distance < 0) {
+      // Convert to similarity: smaller absolute distance = higher similarity
+      // Formula: similarity = 1 / (1 + |distance|)
+      return 1 / (1 + Math.abs(distance));
+    }
+
+    // Handle cosine distance (range 0-2)
+    // Cosine distance: 0 = identical vectors, 2 = opposite vectors
+    if (distance <= 2.0) {
+      // Linear conversion: 0 distance → 1.0 similarity, 2 distance → 0.0 similarity
+      return Math.max(0, 1 - (distance / 2));
+    }
+
+    // Handle L2/Euclidean distance (typically > 2)
+    // Larger distances indicate less similarity
+    // Formula: similarity = 1 / (1 + distance)
+    // This ensures: distance 0 → similarity 1, distance ∞ → similarity 0
+    return 1 / (1 + distance);
+  }
 
   /**
    * Extract keywords from query text
