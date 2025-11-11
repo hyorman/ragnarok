@@ -48,6 +48,11 @@ export interface AddDocumentResult {
 export class TopicManager {
   private static instance: TopicManager;
   private static initPromise: Promise<void> | null = null;
+
+  // Callback registry for external components to register cleanup functions
+  // This allows TopicManager to notify other components (like RAGTool) without creating circular dependencies
+  private static agentCacheCleanupCallback: ((topicId: string) => void) | null = null;
+
   private context: vscode.ExtensionContext;
   private logger: Logger;
   private topicsIndex: TopicsIndex | null = null;
@@ -87,8 +92,23 @@ export class TopicManager {
 
     // Wait for initialization to complete
     if (TopicManager.initPromise) {
-      await TopicManager.initPromise;
-      TopicManager.initPromise = null;
+      try {
+        await TopicManager.initPromise;
+      } catch (error) {
+        // Clear instance on failure to allow retry
+        TopicManager.instance = null as any;
+        TopicManager.initPromise = null;
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        throw new Error(`TopicManager initialization failed: ${errorMessage}`);
+      } finally {
+        TopicManager.initPromise = null;
+      }
+    }
+
+    // Verify initialization succeeded
+    if (!TopicManager.instance.isInitialized) {
+      TopicManager.instance = null as any;
+      throw new Error("TopicManager initialization failed - instance is not initialized");
     }
 
     return TopicManager.instance;
@@ -255,6 +275,20 @@ export class TopicManager {
 
       // Save index
       await this.saveTopicsIndex();
+
+      // Notify registered callback to clear agent cache for this topic
+      // This prevents memory leaks without creating circular dependencies
+      if (TopicManager.agentCacheCleanupCallback) {
+        try {
+          TopicManager.agentCacheCleanupCallback(topicId);
+        } catch (error) {
+          // Don't fail topic deletion if cleanup callback fails
+          this.logger.debug("Agent cache cleanup callback failed", {
+            topicId,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
 
       this.logger.info("Topic deleted successfully", { topicId, topicName });
     } catch (error) {
@@ -547,16 +581,12 @@ export class TopicManager {
   }
 
   /**
-   * Clear vector store cache
+   * Register a callback function to be called when topics are deleted
+   * This allows external components (like RAGTool) to clean up their caches
+   * without creating circular dependencies
    */
-  public clearCache(topicId?: string): void {
-    if (topicId) {
-      this.vectorStoreCache.delete(topicId);
-      this.logger.debug("Cache cleared for topic", { topicId });
-    } else {
-      this.vectorStoreCache.clear();
-      this.logger.debug("All cache cleared");
-    }
+  public static registerAgentCacheCleanupCallback(callback: (topicId: string) => void): void {
+    TopicManager.agentCacheCleanupCallback = callback;
   }
 
   /**
@@ -565,6 +595,38 @@ export class TopicManager {
   public async refresh(): Promise<void> {
     this.logger.info("Refreshing topics");
     await this.loadTopicsIndex();
+  }
+
+  /**
+   * Dispose of all resources and clean up
+   * Should be called when TopicManager is no longer needed
+   */
+  public dispose(): void {
+    this.logger.info("Disposing TopicManager");
+
+    // Clear all caches
+    this.vectorStoreCache.clear();
+    this.topicDocuments.clear();
+
+    // Dispose of document pipeline
+    if (this.documentPipeline) {
+      this.documentPipeline.dispose();
+    }
+
+    // Dispose of vector store factory if it exists
+    if (this.vectorStoreFactory) {
+      this.vectorStoreFactory.dispose();
+      this.vectorStoreFactory = null;
+    }
+
+    // Clear references
+    this.topicsIndex = null;
+    this.isInitialized = false;
+
+    // Clear static callback
+    TopicManager.agentCacheCleanupCallback = null;
+
+    this.logger.info("TopicManager disposed");
   }
 
   // ==================== Private Methods ====================

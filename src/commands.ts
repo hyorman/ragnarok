@@ -608,7 +608,7 @@ export class CommandHandler {
       logger.error(`Failed to add GitHub repository: ${error}`);
       const errorMessage = error instanceof Error ? error.message : String(error);
       const errorStack = error instanceof Error ? error.stack : undefined;
-      
+
       vscode.window.showErrorMessage(
         `Failed to add GitHub repository:\n\n${errorMessage}${errorStack ? '\n\nStack:\n' + errorStack : ''}`,
         "OK"

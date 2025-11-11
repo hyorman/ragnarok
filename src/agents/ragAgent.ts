@@ -275,7 +275,7 @@ export class RAGAgent {
     if (strategy === RetrievalStrategy.ENSEMBLE && !this.ensembleRetriever) {
       this.logger.info('Initializing EnsembleRetriever on-demand');
       this.ensembleRetriever = new EnsembleRetrieverWrapper(this.vectorStore);
-      
+
       try {
         // Fetch documents from vector store for BM25
         const allDocs = await this.vectorStore.similaritySearch('', 10000);
@@ -291,7 +291,7 @@ export class RAGAgent {
     if (strategy === RetrievalStrategy.BM25 && !this.bm25Retriever) {
       this.logger.info('Initializing BM25Retriever on-demand');
       this.bm25Retriever = new BM25RetrieverWrapper();
-      
+
       try {
         // Fetch documents from vector store
         const allDocs = await this.vectorStore.similaritySearch('', 10000);

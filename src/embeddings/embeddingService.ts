@@ -196,7 +196,7 @@ export class EmbeddingService {
     if (text.length <= maxChars) {
       return text;
     }
-    
+
     // Truncate and add ellipsis
     return text.substring(0, maxChars - 3) + '...';
   }
@@ -216,7 +216,7 @@ export class EmbeddingService {
     try {
       // Truncate text to fit model's limit (256 word pieces ~= 512 chars)
       const truncatedText = this.truncateText(text);
-      
+
       // Generate embedding
       const output = await this.pipeline(truncatedText, {
         pooling: 'mean',
@@ -256,7 +256,7 @@ export class EmbeddingService {
       // Process in batches to avoid memory issues
       // Smaller batches but parallelized for much better performance
       const batchSize = 1000; // Process 1000 at a time in parallel
-      
+
       for (let i = 0; i < texts.length; i += batchSize) {
         const batch = texts.slice(i, i + batchSize);
 
@@ -270,7 +270,7 @@ export class EmbeddingService {
         const batchPromises = batch.map(async (text) => {
           // Truncate text to fit model's limit (256 word pieces ~= 512 chars)
           const truncatedText = this.truncateText(text);
-          
+
           const output = await this.pipeline!(truncatedText, {
             pooling: 'mean',
             normalize: true,
@@ -358,6 +358,26 @@ export class EmbeddingService {
 
     this.logger.info('Embedding model cache cleared successfully');
     vscode.window.showInformationMessage('Embedding model cache cleared. Model will reload on next use.');
+  }
+
+  /**
+   * Dispose of all resources and clean up
+   * Should be called when the service is no longer needed
+   */
+  public dispose(): void {
+    this.logger.info('Disposing EmbeddingService');
+
+    // Clear pipeline
+    this.pipeline = null;
+    this.currentModel = null;
+
+    // Clear transformers module reference
+    this.transformers = null;
+
+    // Clear initialization promise
+    this.initPromise = null;
+
+    this.logger.info('EmbeddingService disposed');
   }
 }
 
