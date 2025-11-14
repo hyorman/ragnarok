@@ -20,6 +20,7 @@ export const CONFIG = {
   ROOT: "ragnarok",
   // Basic configuration
   EMBEDDING_MODEL: "embeddingModel",
+  LOCAL_MODEL_PATH: "localModelPath",
   TOP_K: "topK",
   CHUNK_SIZE: "chunkSize",
   CHUNK_OVERLAP: "chunkOverlap",

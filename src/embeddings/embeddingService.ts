@@ -14,6 +14,8 @@
  */
 
 import * as vscode from 'vscode';
+import * as path from 'path';
+import * as fs from 'fs/promises';
 import { Mutex } from 'async-mutex';
 import { cosineSimilarity as langchainCosineSimilarity, euclideanDistance, innerProduct } from '@langchain/core/utils/math';
 import { CONFIG } from '../utils/constants';
@@ -75,11 +77,78 @@ export class EmbeddingService {
   }
 
   /**
+   * Resolve and validate a local model path
+   * Supports absolute paths, relative paths, and ~ expansion
+   */
+  private async resolveLocalModelPath(localPath: string): Promise<string> {
+    let resolvedPath = localPath;
+
+    // Expand ~ to home directory
+    if (resolvedPath.startsWith('~')) {
+      const homeDir = process.env.HOME || process.env.USERPROFILE;
+      if (homeDir) {
+        resolvedPath = path.join(homeDir, resolvedPath.slice(1));
+      }
+    }
+
+    // If relative path, resolve relative to workspace root
+    if (!path.isAbsolute(resolvedPath)) {
+      const workspaceFolders = vscode.workspace.workspaceFolders;
+      if (workspaceFolders && workspaceFolders.length > 0) {
+        resolvedPath = path.resolve(workspaceFolders[0].uri.fsPath, resolvedPath);
+      } else {
+        // Fallback to current working directory
+        resolvedPath = path.resolve(process.cwd(), resolvedPath);
+      }
+    }
+
+    // Normalize the path
+    resolvedPath = path.normalize(resolvedPath);
+
+    // Validate the path exists and is a directory
+    try {
+      const stats = await fs.stat(resolvedPath);
+      if (!stats.isDirectory()) {
+        throw new Error(`Local model path is not a directory: ${resolvedPath}`);
+      }
+
+      // Check for required model files (at least config.json should exist)
+      const configPath = path.join(resolvedPath, 'config.json');
+      try {
+        await fs.access(configPath);
+      } catch {
+        this.logger.warn(`config.json not found in ${resolvedPath}, but proceeding anyway`);
+      }
+
+      return resolvedPath;
+    } catch (error: any) {
+      if (error.code === 'ENOENT') {
+        throw new Error(`Local model path does not exist: ${resolvedPath}`);
+      }
+      throw error;
+    }
+  }
+
+  /**
    * Initialize the embedding model with mutex to prevent race conditions
    */
   public async initialize(modelName?: string): Promise<void> {
     const config = vscode.workspace.getConfiguration(CONFIG.ROOT);
-    const targetModel = modelName || config.get<string>(CONFIG.EMBEDDING_MODEL, 'Xenova/all-MiniLM-L6-v2');
+
+    // Check for local model path first (takes precedence)
+    const localModelPath = config.get<string | null>(CONFIG.LOCAL_MODEL_PATH, null);
+    let targetModel: string;
+    let isLocalModel = false;
+
+    if (localModelPath && localModelPath.trim()) {
+      // Use local model path
+      targetModel = await this.resolveLocalModelPath(localModelPath.trim());
+      isLocalModel = true;
+      this.logger.info(`Using local model path: ${targetModel}`);
+    } else {
+      // Use HuggingFace model identifier
+      targetModel = modelName || config.get<string>(CONFIG.EMBEDDING_MODEL, 'Xenova/all-MiniLM-L6-v2');
+    }
 
     // Already initialized with the same model
     if (this.pipeline && this.currentModel === targetModel) {
@@ -105,8 +174,8 @@ export class EmbeddingService {
       }
 
       // Start new initialization
-      this.logger.info(`Initializing embedding model: ${targetModel}`);
-      this.initPromise = this._initializePipeline(targetModel);
+      this.logger.info(`Initializing embedding model: ${targetModel}${isLocalModel ? ' (local)' : ''}`);
+      this.initPromise = this._initializePipeline(targetModel, isLocalModel);
 
       try {
         await this.initPromise;
@@ -120,7 +189,7 @@ export class EmbeddingService {
     });
   }
 
-  private async _initializePipeline(modelName: string): Promise<void> {
+  private async _initializePipeline(modelName: string, isLocalModel: boolean = false): Promise<void> {
     const maxRetries = 3;
     let lastError: Error | null = null;
 
@@ -130,18 +199,29 @@ export class EmbeddingService {
 
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
+        // Format model name for display
+        const displayName = isLocalModel ? path.basename(modelName) : modelName;
+
         await vscode.window.withProgress(
           {
             location: vscode.ProgressLocation.Notification,
-            title: `Loading embedding model: ${modelName}${attempt > 1 ? ` (Attempt ${attempt}/${maxRetries})` : ''}`,
+            title: `Loading embedding model: ${displayName}${attempt > 1 ? ` (Attempt ${attempt}/${maxRetries})` : ''}${isLocalModel ? ' (local)' : ''}`,
             cancellable: false,
           },
           async (progress) => {
-            progress.report({ message: 'Downloading and initializing...' });
+            if (isLocalModel) {
+              progress.report({ message: 'Loading local model...' });
+            } else {
+              progress.report({ message: 'Downloading and initializing...' });
+            }
 
             // Create the feature extraction pipeline
-            this.pipeline = await pipeline('feature-extraction', modelName, {
-              progress_callback: (progressData: any) => {
+            // For local models, pass the path directly; for remote models, use the model identifier
+            const pipelineOptions: any = {};
+
+            if (!isLocalModel) {
+              // Only add progress callback for remote models (downloading)
+              pipelineOptions.progress_callback = (progressData: any) => {
                 if (progressData.status === 'progress' && progressData.progress) {
                   const percent = Math.round(progressData.progress);
                   progress.report({
@@ -149,8 +229,10 @@ export class EmbeddingService {
                     increment: 1
                   });
                 }
-              }
-            });
+              };
+            }
+
+            this.pipeline = await pipeline('feature-extraction', modelName, pipelineOptions);
 
             // Validate the pipeline by testing with dummy text
             await this.pipeline('test', { pooling: 'mean', normalize: true });
