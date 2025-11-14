@@ -71,7 +71,7 @@ export async function activate(context: vscode.ExtensionContext) {
     try {
       // Check if Language Model API is available
       if (!vscode.lm || typeof vscode.lm.registerTool !== "function") {
-        console.warn(
+        logger.warn(
           "Language Model API not available. Requires VS Code 1.90+ and GitHub Copilot Chat."
         );
         vscode.window
@@ -90,12 +90,13 @@ export async function activate(context: vscode.ExtensionContext) {
           });
       } else {
         const ragToolDisposable = RAGTool.register(context);
-        console.log("RAG query tool registered successfully");
+        logger.info("RAG query tool registered successfully");
       }
     } catch (error) {
-      console.error("Failed to register RAG tool:", error);
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      logger.error("Failed to register RAG tool", { error: errorMessage });
       vscode.window.showWarningMessage(
-        `RAG tool registration failed: ${error}`
+        `RAG tool registration failed: ${errorMessage}`
       );
     }
 
@@ -132,8 +133,20 @@ export async function activate(context: vscode.ExtensionContext) {
 
 export async function deactivate() {
   logger.info("RAGnarōk extension deactivating...");
-  // Clear any caches
-  const topicManager = await TopicManager.getInstance();
-  topicManager.clearCache();
-  logger.info("Extension deactivation complete");
+
+  try {
+    // Dispose of TopicManager (includes all caches and dependencies)
+    const topicManager = await TopicManager.getInstance();
+    topicManager.dispose();
+
+    // Dispose of EmbeddingService
+    const embeddingService = EmbeddingService.getInstance();
+    embeddingService.dispose();
+
+    logger.info("Extension deactivation complete");
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    logger.error("Error during deactivation", { error: errorMessage });
+    // Don't throw - deactivation should be best-effort
+  }
 }
