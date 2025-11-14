@@ -350,7 +350,7 @@
     "pretest": "npm run compile && npm run compile:tests",
     "test": "node ./out/test/test/runTest.js",
     "inspect:chunks": "npm run compile && node scripts/inspect-chunks.js",
-    "clean": "rimraf out",
+    "clean": "rimraf out && rimraf node_modules",
     "clean:test": "rimraf out/test"
   },
   "devDependencies": {
