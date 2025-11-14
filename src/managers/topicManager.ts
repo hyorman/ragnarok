@@ -132,30 +132,36 @@ export class TopicManager {
       // Load topics index
       await this.loadTopicsIndex();
 
-      // Get embedding model from config
+      // Get embedding model from config (may be overridden by localModelPath)
       const config = vscode.workspace.getConfiguration(CONFIG.ROOT);
       const embeddingModel = config.get<string>(
         CONFIG.EMBEDDING_MODEL,
         "Xenova/all-MiniLM-L6-v2"
       );
 
-      // Initialize document pipeline
+      // Initialize document pipeline (this will handle local model path resolution)
       const storageDir = this.getDatabaseDir();
       await this.documentPipeline.initialize(storageDir, embeddingModel);
 
-      // Create LangChain-compatible embeddings wrapper
-      const embeddings = new TransformersEmbeddings({ modelName: embeddingModel });
+      // Get the actual model name that was initialized (may be local path or HuggingFace identifier)
+      const actualModelName = this.embeddingService.getCurrentModel();
+      if (!actualModelName) {
+        throw new Error("Failed to get current embedding model name");
+      }
+
+      // Create LangChain-compatible embeddings wrapper with actual model name
+      const embeddings = new TransformersEmbeddings({ modelName: actualModelName });
 
       this.vectorStoreFactory = new VectorStoreFactory(
         embeddings,
         storageDir,
-        embeddingModel
+        actualModelName
       );
 
       this.isInitialized = true;
       this.logger.info("TopicManager initialized successfully", {
         topicCount: Object.keys(this.topicsIndex?.topics || {}).length,
-        embeddingModel,
+        embeddingModel: actualModelName,
       });
     } catch (error) {
       this.logger.error("Failed to initialize TopicManager", {

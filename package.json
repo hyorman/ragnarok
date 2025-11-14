@@ -31,13 +31,19 @@
         "ragnarok.embeddingModel": {
           "type": "string",
           "default": "Xenova/all-MiniLM-L6-v2",
-          "description": "Sentence transformer model to use for embeddings",
+          "description": "Sentence transformer model to use for embeddings (HuggingFace model identifier). Ignored if localModelPath is set.",
           "enum": [
             "Xenova/all-MiniLM-L6-v2",
             "Xenova/all-MiniLM-L12-v2",
             "Xenova/paraphrase-MiniLM-L6-v2",
             "Xenova/multi-qa-MiniLM-L6-cos-v1"
           ]
+        },
+        "ragnarok.localModelPath": {
+          "type": "string",
+          "default": null,
+          "markdownDescription": "**Local path to a transformers sentence model directory.** If set, this will be used instead of downloading from HuggingFace.\n\n**Requirements:**\n- Path to a directory containing model files (config.json, tokenizer files, model.onnx, etc.)\n- Can be absolute path or relative to workspace root\n- Model must be compatible with Transformers.js (ONNX format)\n\n**Example paths:**\n- `/Users/username/models/my-embedding-model`\n- `./models/my-embedding-model`\n- `~/models/my-embedding-model`\n\n**Note:** If this is set, `embeddingModel` setting is ignored.",
+          "order": 1
         },
         "ragnarok.topK": {
           "type": "number",
