@@ -46,6 +46,27 @@ export interface QueryPlannerOptions {
   useLLM?: boolean;
 }
 
+export interface RefinementContext {
+  /** Current results from previous queries */
+  currentResults: Array<{
+    content: string;
+    score: number;
+    metadata?: Record<string, any>;
+  }>;
+
+  /** Previously executed sub-queries */
+  executedQueries: string[];
+
+  /** Average confidence of current results */
+  avgConfidence: number;
+
+  /** Number of unique documents retrieved */
+  uniqueDocCount: number;
+
+  /** Confidence threshold to meet */
+  confidenceThreshold: number;
+}
+
 /**
  * Query Planner Agent using Zod for validation
  */
@@ -230,7 +251,7 @@ Provide your analysis as valid JSON:`;
     let explanation: string;
 
     if (hasComparison) {
-      // Comparison query 
+      // Comparison query
       complexity = 'complex';
       strategy = 'parallel';
 
@@ -393,5 +414,291 @@ Provide your analysis as valid JSON:`;
     }
 
     return true;
+  }
+
+  /**
+   * Refine query plan based on current results and gaps
+   */
+  public async refinePlan(
+    currentPlan: QueryPlan,
+    refinementContext: RefinementContext,
+    options: QueryPlannerOptions = {}
+  ): Promise<QueryPlan | null> {
+    this.logger.info('Refining query plan based on results', {
+      currentResultCount: refinementContext.currentResults.length,
+      avgConfidence: refinementContext.avgConfidence,
+      useLLM: options.useLLM,
+    });
+
+    try {
+      if (options.useLLM !== false) {
+        // Use LLM to analyze gaps and generate refined queries
+        const llmPlan = await this.refinePlanWithLLM(currentPlan, refinementContext, options);
+        if (llmPlan) {
+          return llmPlan;
+        }
+      }
+
+      // Fallback to heuristic-based refinement
+      this.logger.debug('Using heuristic-based refinement');
+      return this.refinePlanHeuristically(currentPlan, refinementContext, options);
+    } catch (error) {
+      this.logger.error('Query plan refinement failed', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return null;
+    }
+  }
+
+  /**
+   * Refine query plan using LLM to analyze gaps
+   */
+  private async refinePlanWithLLM(
+    currentPlan: QueryPlan,
+    context: RefinementContext,
+    options: QueryPlannerOptions
+  ): Promise<QueryPlan | null> {
+    try {
+      // Get VS Code Language Model
+      const config = vscode.workspace.getConfiguration('ragnarok');
+      const modelFamily = config.get<string>('agenticLLMModel', 'gpt-4o');
+
+      const models = await vscode.lm.selectChatModels({
+        vendor: 'copilot',
+        family: modelFamily
+      });
+
+      if (models.length === 0) {
+        this.logger.debug('No language models available for refinement');
+        return null;
+      }
+
+      const model = models[0];
+
+      // Build results summary
+      const resultsSummary = context.currentResults
+        .slice(0, 5)
+        .map((r, i) => {
+          const excerpt = r.content.substring(0, 150).replace(/\n/g, ' ');
+          return `${i + 1}. [Score: ${r.score.toFixed(2)}] ${excerpt}...`;
+        })
+        .join('\n');
+
+      // Build context string
+      const contextStr = this.buildContextString(options);
+
+      // Build prompt for gap analysis
+      const prompt = `You are analyzing search results to identify information gaps.
+
+${contextStr}
+
+Original Query: "${currentPlan.originalQuery}"
+
+Current Sub-Queries Executed:
+${context.executedQueries.map((q, i) => `${i + 1}. ${q}`).join('\n')}
+
+Results Summary:
+- Total results: ${context.currentResults.length}
+- Average relevance: ${context.avgConfidence.toFixed(2)}
+- Unique documents: ${context.uniqueDocCount}
+- Confidence threshold: ${context.confidenceThreshold}
+
+Top Result Excerpts:
+${resultsSummary}
+
+Your task: Identify information gaps and generate 1-3 refined follow-up queries to fill these gaps.
+
+Guidelines:
+1. Only suggest queries if there are clear gaps or low confidence
+2. Focus on aspects NOT well-covered in current results
+3. Make queries specific and targeted
+4. If results are sufficient, return an empty array
+
+Response Format (JSON):
+{
+  "hasGaps": true/false,
+  "gapAnalysis": "brief explanation of what's missing",
+  "refinedQueries": [
+    {
+      "query": "refined query text",
+      "reasoning": "why this query fills a gap",
+      "topK": 5,
+      "priority": "high" | "medium" | "low"
+    }
+  ]
+}
+
+Provide your analysis as valid JSON:`;
+
+      // Send request to LLM
+      const messages = [{ role: 1, content: prompt } as any];
+      const response = await model.sendRequest(
+        messages,
+        {},
+        new vscode.CancellationTokenSource().token
+      );
+
+      // Collect response
+      let responseText = '';
+      for await (const chunk of response.text) {
+        responseText += chunk;
+      }
+
+      this.logger.debug('LLM refinement response received', {
+        responseLength: responseText.length,
+      });
+
+      // Parse JSON response
+      const jsonMatch = responseText.match(/```json\n([\s\S]*?)\n```/) ||
+                       responseText.match(/```\n([\s\S]*?)\n```/);
+      const jsonText = jsonMatch ? jsonMatch[1] : responseText;
+      const refinementData = JSON.parse(jsonText.trim());
+
+      // Check if refinement is needed
+      if (!refinementData.hasGaps || !refinementData.refinedQueries ||
+          refinementData.refinedQueries.length === 0) {
+        this.logger.info('LLM determined no refinement needed', {
+          analysis: refinementData.gapAnalysis,
+        });
+        return null;
+      }
+
+      this.logger.info('LLM identified gaps and generated refined queries', {
+        analysis: refinementData.gapAnalysis,
+        queryCount: refinementData.refinedQueries.length,
+      });
+
+      // Apply constraints
+      let refinedQueries = refinementData.refinedQueries;
+      if (options.maxSubQueries && refinedQueries.length > options.maxSubQueries) {
+        refinedQueries = refinedQueries.slice(0, options.maxSubQueries);
+      }
+
+      // Set default topK if not specified
+      const defaultTopK = options.defaultTopK || 5;
+      refinedQueries.forEach((sq: SubQuery) => {
+        if (!sq.topK) {
+          sq.topK = defaultTopK;
+        }
+      });
+
+      // Create refined plan
+      const refinedPlan: QueryPlan = {
+        originalQuery: currentPlan.originalQuery,
+        complexity: 'moderate',
+        subQueries: refinedQueries,
+        strategy: 'parallel',
+        explanation: `Refinement: ${refinementData.gapAnalysis}`,
+      };
+
+      return refinedPlan;
+    } catch (error) {
+      this.logger.error('LLM-based refinement failed', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return null;
+    }
+  }
+
+  /**
+   * Refine query plan using heuristic rules
+   */
+  private refinePlanHeuristically(
+    currentPlan: QueryPlan,
+    context: RefinementContext,
+    options: QueryPlannerOptions
+  ): QueryPlan | null {
+    this.logger.debug('Heuristic gap analysis', {
+      avgConfidence: context.avgConfidence,
+      uniqueDocs: context.uniqueDocCount,
+      resultCount: context.currentResults.length,
+    });
+
+    // Check if refinement is needed based on heuristics
+    const needsRefinement =
+      context.avgConfidence < context.confidenceThreshold * 1.2 || // Close to threshold
+      context.uniqueDocCount < 3 || // Too few unique documents
+      context.currentResults.length < (options.defaultTopK || 5); // Fewer results than expected
+
+    if (!needsRefinement) {
+      this.logger.debug('Heuristics indicate no refinement needed');
+      return null;
+    }
+
+    // Generate refined queries based on the original query
+    const refinedSubQueries: SubQuery[] = [];
+    const defaultTopK = options.defaultTopK || 5;
+
+    // Strategy 1: Add more specific terms if confidence is low
+    if (context.avgConfidence < context.confidenceThreshold) {
+      // Extract key terms and create targeted queries
+      const words = currentPlan.originalQuery.split(/\s+/)
+        .filter(w => w.length > 4)
+        .slice(0, 3);
+
+      for (const word of words) {
+        refinedSubQueries.push({
+          query: `${word} ${currentPlan.originalQuery}`,
+          reasoning: `Focus on "${word}" aspect of the query`,
+          topK: defaultTopK,
+          priority: 'medium',
+        });
+      }
+    }
+
+    // Strategy 2: Try alternative phrasings if few results
+    if (context.currentResults.length < defaultTopK) {
+      // Create synonym-based variations
+      const alternativeQuery = currentPlan.originalQuery
+        .replace(/\bhow\b/gi, 'what way')
+        .replace(/\bwhat\b/gi, 'which')
+        .replace(/\bwhy\b/gi, 'reason for');
+
+      if (alternativeQuery !== currentPlan.originalQuery) {
+        refinedSubQueries.push({
+          query: alternativeQuery,
+          reasoning: 'Alternative phrasing of the query',
+          topK: defaultTopK,
+          priority: 'medium',
+        });
+      }
+    }
+
+    // Strategy 3: Broaden search if too specific
+    if (context.uniqueDocCount < 3) {
+      // Extract core concepts (remove modifiers)
+      const coreQuery = currentPlan.originalQuery
+        .replace(/\b(very|extremely|highly|most|best|worst)\b/gi, '')
+        .trim();
+
+      if (coreQuery !== currentPlan.originalQuery && coreQuery.length > 5) {
+        refinedSubQueries.push({
+          query: coreQuery,
+          reasoning: 'Broader search for core concepts',
+          topK: defaultTopK,
+          priority: 'low',
+        });
+      }
+    }
+
+    // Limit to max 3 refined queries
+    const limitedQueries = refinedSubQueries.slice(0, 3);
+
+    if (limitedQueries.length === 0) {
+      this.logger.debug('No heuristic refinements generated');
+      return null;
+    }
+
+    this.logger.info('Generated heuristic refinements', {
+      refinementCount: limitedQueries.length,
+    });
+
+    return {
+      originalQuery: currentPlan.originalQuery,
+      complexity: 'moderate',
+      subQueries: limitedQueries,
+      strategy: 'parallel',
+      explanation: 'Heuristic refinement based on low confidence or sparse results',
+    };
   }
 }
