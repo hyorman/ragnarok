@@ -112,7 +112,7 @@ export class SemanticChunker {
       for (let i = 0; i < documents.length; i += BATCH_SIZE) {
         const batch = documents.slice(i, Math.min(i + BATCH_SIZE, documents.length));
         const progressPercent = Math.round((i / documents.length) * 100);
-        
+
         this.logger.info('Processing document batch', {
           batchStart: i,
           batchEnd: Math.min(i + BATCH_SIZE, documents.length),
@@ -122,12 +122,12 @@ export class SemanticChunker {
         });
 
         const batchChunks = await splitter.splitDocuments(batch);
-        
+
         // Use direct assignment for better performance
         for (let j = 0; j < batchChunks.length; j++) {
           chunks.push(batchChunks[j]);
         }
-        
+
         // Yield to event loop periodically to keep UI responsive
         if (i % 500 === 0 && i > 0) {
           await new Promise(resolve => setImmediate(resolve));
@@ -361,20 +361,20 @@ export class SemanticChunker {
   ): LangChainDocument[] {
     const BATCH_SIZE = 1000;
     const enriched: LangChainDocument[] = [];
-    
+
     for (let i = 0; i < chunks.length; i += BATCH_SIZE) {
       const batch = chunks.slice(i, Math.min(i + BATCH_SIZE, chunks.length));
       const batchEnriched = batch.map((chunk, batchIndex) => {
         const globalIndex = i + batchIndex;
         return this.enrichSingleChunk(chunk, globalIndex, options);
       });
-      
+
       // Use direct assignment instead of spread
       for (const enrichedChunk of batchEnriched) {
         enriched.push(enrichedChunk);
       }
     }
-    
+
     return enriched;
   }
 

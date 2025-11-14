@@ -259,14 +259,21 @@ export class VectorStoreFactory {
     }
   }
 
-  public clearCache(topicId?: string): void {
-    if (topicId) {
-      this.storeCache.delete(topicId);
-      this.logger.debug("Cache cleared for topic", { topicId });
-    } else {
-      this.storeCache.clear();
-      this.logger.debug("All store cache cleared");
-    }
+  /**
+   * Dispose of all resources and clean up
+   * Clears cache and releases references
+   * Note: LanceDB connections are stateless and don't need explicit closing
+   */
+  public dispose(): void {
+    this.logger.info("Disposing VectorStoreFactory");
+
+    // Clear all cached stores
+    this.storeCache.clear();
+
+    // Clear references
+    this.embeddings = null as any;
+
+    this.logger.info("VectorStoreFactory disposed");
   }
 
   /**

@@ -3,9 +3,9 @@
 /**
  * Install platform-specific dependencies for packaging VS Code extension
  *
- * This script ensures all platform-specific native modules are installed
- * before packaging, so the extension works on all platforms regardless of
- * which platform it was built on.
+ * This script installs only the platform-specific native modules for the
+ * current platform, so the VSIX package only includes binaries for the
+ * target platform.
  *
  * npm by default respects the "os" and "cpu" fields in package.json and won't
  * install packages for other platforms. This script bypasses that by downloading
@@ -23,30 +23,121 @@ const PLATFORM_PACKAGE_CONFIGS = [
     scope: '@lancedb',
     prefix: 'lancedb-',
     description: 'LanceDB',
-    expectedCount: 6,
+    expectedCount: 1,
     sources: ['dependencies', 'optionalDependencies']
   },
   {
     scope: '@img',
     prefix: 'sharp-',
     description: 'Sharp',
-    expectedCount: 6,
+    expectedCount: 1,
     sources: ['dependencies', 'optionalDependencies']
   },
   {
     scope: '@img',
     prefix: 'sharp-libvips-',
     description: 'Sharp libvips',
-    expectedCount: 6,
+    expectedCount: 1,
     sources: ['dependencies', 'optionalDependencies']
   }
 ];
+
+/**
+ * Parse target platform from argument or environment variable
+ * Format: {platform}-{arch} (e.g., "linux-x64", "darwin-arm64", "win32-x64")
+ */
+function getTargetPlatform() {
+  // Check command line arguments first
+  const args = process.argv.slice(2);
+  let target = args.find(arg => !arg.startsWith('--'));
+
+  // Check environment variable if not provided as argument
+  if (!target) {
+    target = process.env.VSCE_TARGET || process.env.TARGET;
+  }
+
+  if (!target) {
+    throw new Error(
+      'Target platform is required. ' +
+      'Usage: node install-platform-deps.js <target> ' +
+      'or set VSCE_TARGET environment variable. ' +
+      'Examples: linux-x64, darwin-arm64, win32-x64'
+    );
+  }
+
+  // Parse target format: {platform}-{arch}
+  const parts = target.split('-');
+  if (parts.length < 2) {
+    throw new Error(`Invalid target format: ${target}. Expected format: {platform}-{arch} (e.g., linux-x64)`);
+  }
+
+  const platformName = parts[0]; // 'darwin', 'linux', 'win32'
+  const archName = parts[1]; // 'arm64', 'x64'
+
+  // Validate platform
+  const validPlatforms = ['darwin', 'linux', 'win32'];
+  if (!validPlatforms.includes(platformName)) {
+    throw new Error(`Invalid platform: ${platformName}. Must be one of: ${validPlatforms.join(', ')}`);
+  }
+
+  // Validate architecture
+  const validArchs = ['arm64', 'x64'];
+  if (!validArchs.includes(archName)) {
+    throw new Error(`Invalid architecture: ${archName}. Must be one of: ${validArchs.join(', ')}`);
+  }
+
+  // Generate patterns that match packages for this platform
+  // LanceDB uses variants like: linux-x64-gnu, win32-x64-msvc
+  const patterns = [`${platformName}-${archName}`];
+
+  if (platformName === 'linux') {
+    patterns.push(`${platformName}-${archName}-gnu`);
+  } else if (platformName === 'win32') {
+    patterns.push(`${platformName}-${archName}-msvc`);
+  }
+
+  return {
+    platform: platformName,
+    arch: archName,
+    target: `${platformName}-${archName}`,
+    patterns
+  };
+}
+
+/**
+ * Check if a package name matches the target platform
+ */
+function matchesTargetPlatform(packageName, platformPatterns) {
+  // Extract the platform identifier from package name
+  // e.g., "@img/sharp-darwin-arm64" -> "darwin-arm64"
+  // e.g., "@lancedb/lancedb-linux-x64-gnu" -> "linux-x64-gnu"
+  const parts = packageName.split('/');
+  if (parts.length !== 2) return false;
+
+  const packagePart = parts[1];
+
+  // Check if any platform pattern matches
+  // A pattern matches if:
+  // 1. The package name starts with the pattern (e.g., "darwin-arm64" matches "darwin-arm64")
+  // 2. The package name contains the pattern followed by a hyphen (e.g., "linux-x64" matches "linux-x64-gnu")
+  return platformPatterns.some(pattern => {
+    // Check if package name contains the pattern
+    const patternIndex = packagePart.indexOf(pattern);
+    if (patternIndex === -1) return false;
+
+    // Check if pattern is at the end or followed by a hyphen (for variants like -gnu, -msvc)
+    const afterPattern = packagePart.substring(patternIndex + pattern.length);
+    return afterPattern === '' || afterPattern.startsWith('-');
+  });
+}
 
 // Read package.json
 const packageJsonPath = path.join(__dirname, '..', 'package.json');
 const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'));
 
-console.log('Installing platform-specific dependencies for cross-platform packaging...\n');
+// Get target platform
+const targetPlatform = getTargetPlatform();
+console.log(`Installing platform-specific dependencies for ${targetPlatform.target}...\n`);
 
 // Collect platform-specific packages based on configuration
 const platformDeps = [];
@@ -55,7 +146,14 @@ for (const config of PLATFORM_PACKAGE_CONFIGS) {
   for (const source of config.sources) {
     const deps = packageJson[source] || {};
     const filtered = Object.entries(deps)
-      .filter(([name]) => name.startsWith(`${config.scope}/${config.prefix}`))
+      .filter(([name]) => {
+        // First check if it's a platform-specific package
+        if (!name.startsWith(`${config.scope}/${config.prefix}`)) {
+          return false;
+        }
+        // Then check if it matches target platform
+        return matchesTargetPlatform(name, targetPlatform.patterns);
+      })
       .map(([name, version]) => ({
         name,
         version: version.replace(/^[\^~]/, ''),
@@ -66,13 +164,15 @@ for (const config of PLATFORM_PACKAGE_CONFIGS) {
 }
 
 if (platformDeps.length === 0) {
-  console.log('No platform-specific dependencies found.');
+  console.log(`No platform-specific dependencies found for target platform ${targetPlatform.target}.`);
   process.exit(0);
 }
 
 console.log('Target platform-specific binaries:');
 platformDeps.forEach(({name, version}) => console.log(`  - ${name}@${version}`));
-console.log();async function downloadAndExtract(packageName, version, targetDir) {
+console.log();
+
+async function downloadAndExtract(packageName, version, targetDir) {
   const tarball = `https://registry.npmjs.org/${packageName}/-/${packageName.split('/')[1]}-${version}.tgz`;
 
   console.log(`Downloading ${packageName}@${version}...`);
@@ -131,7 +231,45 @@ async function removePlatformRestrictions(packageDir) {
   }
 }
 
+/**
+ * Remove platform-specific packages that don't match the target platform
+ * This ensures each package operation only includes dependencies for the target platform
+ */
+function cleanupOtherPlatformPackages(targetPlatform) {
+  console.log(`Cleaning up platform-specific packages not matching ${targetPlatform.target}...\n`);
+
+  for (const config of PLATFORM_PACKAGE_CONFIGS) {
+    const scopeDir = path.join(__dirname, '..', 'node_modules', config.scope);
+
+    if (!fs.existsSync(scopeDir)) {
+      continue;
+    }
+
+    const installedPackages = fs.readdirSync(scopeDir)
+      .filter(dir => dir.startsWith(config.prefix));
+
+    for (const packageDir of installedPackages) {
+      const fullPackageName = `${config.scope}/${packageDir}`;
+
+      // Check if this package matches the target platform
+      if (!matchesTargetPlatform(fullPackageName, targetPlatform.patterns)) {
+        const packagePath = path.join(scopeDir, packageDir);
+        console.log(`  Removing ${fullPackageName} (does not match ${targetPlatform.target})`);
+        try {
+          fs.rmSync(packagePath, { recursive: true, force: true });
+        } catch (error) {
+          console.warn(`  ⚠️  Failed to remove ${fullPackageName}: ${error.message}`);
+        }
+      }
+    }
+  }
+}
+
 async function main() {
+  // Clean up platform-specific packages that don't match the target
+  // This ensures each package operation only includes dependencies for the target platform
+  cleanupOtherPlatformPackages(targetPlatform);
+
   // Ensure necessary directories exist for all configured package scopes
   const scopeDirs = {};
 
@@ -175,7 +313,7 @@ async function main() {
 
   console.log('\nVerifying installations:');
 
-  // Verify each configured package type
+  // Verify each configured package type for target platform
   let allInstalled = true;
 
   for (const config of PLATFORM_PACKAGE_CONFIGS) {
@@ -187,19 +325,25 @@ async function main() {
       continue;
     }
 
-    const installed = fs.readdirSync(scopeDir).filter(dir => dir.startsWith(config.prefix));
-    console.log(`\n${config.description}: Found ${installed.length} platform-specific modules:`);
+    // Filter to only packages matching target platform
+    const installed = fs.readdirSync(scopeDir)
+      .filter(dir => {
+        if (!dir.startsWith(config.prefix)) return false;
+        const fullPackageName = `${config.scope}/${dir}`;
+        return matchesTargetPlatform(fullPackageName, targetPlatform.patterns);
+      });
+
+    console.log(`\n${config.description}: Found ${installed.length} platform-specific module(s) for ${targetPlatform.target}:`);
     installed.forEach(dir => console.log(`  ✓ ${dir}`));
 
     if (installed.length < config.expectedCount) {
-      console.warn(`\n⚠️  Warning: Expected ${config.expectedCount} ${config.description} platform modules but found ${installed.length}`);
-      console.warn('Some platforms may not work correctly.');
+      console.warn(`\n⚠️  Warning: Expected ${config.expectedCount} ${config.description} platform module(s) for ${targetPlatform.target} but found ${installed.length}`);
       allInstalled = false;
     }
   }
 
   if (allInstalled) {
-    console.log('\n✓ All platform-specific dependencies installed successfully!');
+    console.log(`\n✓ All platform-specific dependencies for ${targetPlatform.target} installed successfully!`);
   }
 }
 

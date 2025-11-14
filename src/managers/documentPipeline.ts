@@ -450,4 +450,25 @@ export class DocumentPipeline {
     if (!stages.storing) return "storing";
     return "complete";
   }
+
+  /**
+   * Dispose of all resources and clean up
+   * Should be called when DocumentPipeline is no longer needed
+   */
+  public dispose(): void {
+    this.logger.info("Disposing DocumentPipeline");
+
+    // Dispose of vector store factory if it exists
+    if (this.vectorStoreFactory) {
+      this.vectorStoreFactory.dispose();
+      this.vectorStoreFactory = null;
+    }
+
+    // Clear references
+    this.documentLoader = null as any;
+    this.semanticChunker = null as any;
+    this.embeddingService = null as any;
+
+    this.logger.info("DocumentPipeline disposed");
+  }
 }
