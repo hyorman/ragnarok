@@ -50,7 +50,7 @@ installProcess.on('close', (code) => {
   // Run vsce package
   const vsceProcess = spawn('npx', ['vsce', 'package'], {
     stdio: 'inherit',
-    shell: false
+    shell: true
   });
 
   vsceProcess.on('close', (code) => {
