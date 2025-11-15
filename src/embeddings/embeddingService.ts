@@ -14,6 +14,9 @@
  */
 
 import * as vscode from 'vscode';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 import { Mutex } from 'async-mutex';
 import { cosineSimilarity as langchainCosineSimilarity, euclideanDistance, innerProduct } from '@langchain/core/utils/math';
 import { CONFIG, DEFAULTS } from '../utils/constants';
@@ -76,20 +79,56 @@ export class EmbeddingService {
   }
 
   /**
+   * Resolve the configured local model path (if provided)
+   */
+  private resolveLocalModelPath(config: vscode.WorkspaceConfiguration): string | null {
+    const configuredPath = (config.get<string>(CONFIG.LOCAL_MODEL_PATH, DEFAULTS.LOCAL_MODEL_PATH) ?? '').trim();
+    if (!configuredPath) {
+      return null;
+    }
+
+    // Support tilde expansion for convenience
+    const expandedPath = configuredPath.replace(/^~(?=$|\/|\\)/, os.homedir());
+
+    // Relative paths are resolved against the first workspace folder if available
+    const workspaceFolder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    const normalizedPath = path.isAbsolute(expandedPath)
+      ? expandedPath
+      : path.resolve(workspaceFolder ?? process.cwd(), expandedPath);
+
+    if (!fs.existsSync(normalizedPath)) {
+      throw new Error(`Local embedding model path "${configuredPath}" does not exist (resolved to "${normalizedPath}")`);
+    }
+
+    return normalizedPath;
+  }
+
+  /**
    * Initialize the embedding model with mutex to prevent race conditions
    * @param modelName - Optional explicit embedding model name
    */
   public async initialize(modelName?: string): Promise<void> {
     const config = vscode.workspace.getConfiguration(CONFIG.ROOT);
     const configuredModel = config.get<string>(CONFIG.EMBEDDING_MODEL);
+    let localModelPath: string | null = null;
+    if (!modelName) {
+      try {
+        localModelPath = this.resolveLocalModelPath(config);
+      } catch (error) {
+        this.logger.error('Invalid local embedding model path configuration', error);
+        throw error;
+      }
+    }
 
     // Priority:
     // 1. Explicit parameter (for programmatic control, tests)
-    // 2. User's config setting (respect user preference)
-    // 3. Currently loaded model (avoid unnecessary reloads)
-    // 4. Default model (fallback)
+    // 2. Explicit local model path from config (overrides remote identifier)
+    // 3. User's remote config setting (respect user preference)
+    // 4. Currently loaded model (avoid unnecessary reloads)
+    // 5. Default model (fallback)
     const targetModel =
       modelName ??
+      localModelPath ??
       configuredModel ??
       (this.pipeline ? this.currentModel : null) ??
       DEFAULTS.EMBEDDING_MODEL;
@@ -98,7 +137,10 @@ export class EmbeddingService {
       await this.initializeModel(targetModel);
     } catch (error) {
       const isConfigDrivenAttempt =
-        !modelName && !!configuredModel && configuredModel === targetModel;
+        !modelName && (
+          (localModelPath && localModelPath === targetModel) ||
+          (!!configuredModel && configuredModel === targetModel)
+        );
 
       if (isConfigDrivenAttempt) {
         const fallbackModel =

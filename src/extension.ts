@@ -126,7 +126,8 @@ export async function activate(context: vscode.ExtensionContext) {
     // Register configuration change listener for embedding model
     const configChangeDisposable = vscode.workspace.onDidChangeConfiguration(
       async (event) => {
-        const embeddingModelPath = `${CONFIG.ROOT}.${CONFIG.EMBEDDING_MODEL}`;
+        const embeddingModelSetting = `${CONFIG.ROOT}.${CONFIG.EMBEDDING_MODEL}`;
+        const localModelPathSetting = `${CONFIG.ROOT}.${CONFIG.LOCAL_MODEL_PATH}`;
         const treeViewConfigPaths = [
           `${CONFIG.ROOT}.${CONFIG.RETRIEVAL_STRATEGY}`,
           `${CONFIG.ROOT}.${CONFIG.USE_AGENTIC_MODE}`,
@@ -136,7 +137,10 @@ export async function activate(context: vscode.ExtensionContext) {
           `${CONFIG.ROOT}.${CONFIG.AGENTIC_ITERATIVE_REFINEMENT}`,
         ];
 
-        if (event.affectsConfiguration(embeddingModelPath)) {
+        if (
+          event.affectsConfiguration(embeddingModelSetting) ||
+          event.affectsConfiguration(localModelPathSetting)
+        ) {
           logger.info("Embedding model configuration changed");
 
           try {
