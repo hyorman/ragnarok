@@ -6,6 +6,7 @@
  * Integrates: DocumentLoaderFactory → SemanticChunker → EmbeddingService → VectorStoreFactory
  */
 
+import * as vscode from "vscode";
 import { Document as LangChainDocument } from "@langchain/core/documents";
 import {
   DocumentLoaderFactory,
@@ -368,7 +369,18 @@ export class DocumentPipeline {
     }
 
     // Validate embedding model compatibility before proceeding
-    await this.vectorStoreFactory.validateEmbeddingModel(topicId);
+    try {
+      await this.vectorStoreFactory.validateEmbeddingModel(topicId);
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : "Unknown error validating embedding model";
+      vscode.window.showErrorMessage(
+        `Embedding validation failed for this topic: ${message}`
+      );
+      throw error;
+    }
 
     // Try to load existing store or create new one
     let vectorStore = await this.vectorStoreFactory.loadStore(topicId);
