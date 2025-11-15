@@ -21,9 +21,7 @@ describe('LanceDB Integration', function () {
 
   before(async function () {
     // Initialize embeddings
-    embeddings = new TransformersEmbeddings({
-      modelName: 'Xenova/all-MiniLM-L6-v2'
-    });
+    embeddings = new TransformersEmbeddings();
 
     // Create temp directory for test database
     testDbPath = path.join(os.tmpdir(), `lancedb-test-${Date.now()}`);
