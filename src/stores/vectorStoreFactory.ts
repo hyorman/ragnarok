@@ -89,7 +89,7 @@ export class VectorStoreFactory {
     return this.embeddingModel;
   }
 
-  public async createStore(config: VectorStoreConfig, initialDocuments?: LangChainDocument[]) {
+  public async createStore(config: VectorStoreConfig, initialDocuments?: LangChainDocument[]): Promise<void> {
     this.logger.info("Creating vector store", { topicId: config.topicId, documentCount: initialDocuments?.length || 0 });
 
     try {

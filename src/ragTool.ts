@@ -41,8 +41,8 @@ export class RAGTool {
     const ragTool = vscode.lm.registerTool(TOOLS.RAG_QUERY, {
       invoke: async (options: vscode.LanguageModelToolInvocationOptions<RAGQueryParams>) => {
         const params = options.input;
-                  const result = await tool.executeQuery(params);
-          return new vscode.LanguageModelToolResult([
+        const result = await tool.executeQuery(params);
+        return new vscode.LanguageModelToolResult([
             new vscode.LanguageModelTextPart(JSON.stringify(result, null, 2))
           ]);
       },

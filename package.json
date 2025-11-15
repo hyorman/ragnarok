@@ -37,7 +37,8 @@
             "Xenova/all-MiniLM-L12-v2",
             "Xenova/paraphrase-MiniLM-L6-v2",
             "Xenova/multi-qa-MiniLM-L6-cos-v1"
-          ]
+          ],
+          "order": 1
         },
         "ragnarok.localModelPath": {
           "type": "string",
@@ -50,21 +51,24 @@
           "default": 5,
           "description": "Number of top results to return from RAG queries",
           "minimum": 1,
-          "maximum": 20
+          "maximum": 20,
+          "order": 3
         },
         "ragnarok.chunkSize": {
           "type": "number",
           "default": 512,
           "description": "Maximum size of text chunks for embedding (in characters)",
           "minimum": 100,
-          "maximum": 2000
+          "maximum": 2000,
+          "order": 4
         },
         "ragnarok.chunkOverlap": {
           "type": "number",
           "default": 50,
           "description": "Overlap between chunks (in characters)",
           "minimum": 0,
-          "maximum": 500
+          "maximum": 500,
+          "order": 5
         },
         "ragnarok.logLevel": {
           "type": "string",
@@ -81,7 +85,8 @@
             "Info: Standard informational messages (recommended)",
             "Warn: Only warnings and errors",
             "Error: Only error messages (least verbose)"
-          ]
+          ],
+          "order": 6
         },
         "ragnarok.retrievalStrategy": {
           "type": "string",
