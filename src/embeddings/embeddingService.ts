@@ -18,7 +18,8 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { Mutex } from 'async-mutex';
-import { cosineSimilarity as langchainCosineSimilarity, euclideanDistance, innerProduct } from '@langchain/core/utils/math';
+// Alias LangChain math helpers to avoid name collisions with class methods
+import { cosineSimilarity as langchainCosineSimilarity, euclideanDistance as langchainEuclideanDistance, innerProduct as langchainInnerProduct } from '@langchain/core/utils/math';
 import { CONFIG, DEFAULTS } from '../utils/constants';
 import { Logger } from '../utils/logger';
 
@@ -401,6 +402,8 @@ export class EmbeddingService {
 
   /**
    * Calculate Euclidean distance between two embeddings using LangChain's implementation
+    * Note: the LangChain helper is imported as `langchainEuclideanDistance` to
+    * avoid confusion with this class method name.
    */
   public euclideanDistance(a: number[], b: number[]): number {
     if (a.length !== b.length) {
@@ -408,12 +411,14 @@ export class EmbeddingService {
     }
 
     // LangChain's euclideanDistance works on matrices, so wrap vectors in arrays
-    const result = euclideanDistance([a], [b]);
+    const result = langchainEuclideanDistance([a], [b]);
     return result[0][0];
   }
 
   /**
    * Calculate inner product (dot product) between two embeddings using LangChain's implementation
+    * Note: the LangChain helper is imported as `langchainInnerProduct` to
+    * avoid confusion with this class method name.
    */
   public innerProduct(a: number[], b: number[]): number {
     if (a.length !== b.length) {
@@ -421,7 +426,7 @@ export class EmbeddingService {
     }
 
     // LangChain's innerProduct works on matrices, so wrap vectors in arrays
-    const result = innerProduct([a], [b]);
+    const result = langchainInnerProduct([a], [b]);
     return result[0][0];
   }
 

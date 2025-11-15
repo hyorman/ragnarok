@@ -592,7 +592,7 @@ describe("DocumentPipeline", function () {
         expect(result2.errors).to.be.an("array");
         expect(result2.errors!.length).to.be.greaterThan(0);
         expect(result2.errors![0]).to.include("Embedding model mismatch");
-      } finally{
+      } finally {
         // Always restore original model state in finally block
         if (testOriginalModel) {
           await embeddingService.initialize(testOriginalModel);
