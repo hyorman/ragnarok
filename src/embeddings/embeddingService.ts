@@ -16,7 +16,7 @@
 import * as vscode from 'vscode';
 import { Mutex } from 'async-mutex';
 import { cosineSimilarity as langchainCosineSimilarity, euclideanDistance, innerProduct } from '@langchain/core/utils/math';
-import { CONFIG } from '../utils/constants';
+import { CONFIG, DEFAULTS } from '../utils/constants';
 import { Logger } from '../utils/logger';
 
 // Type definitions for the dynamically imported transformers module
@@ -26,7 +26,8 @@ type FeatureExtractionPipeline = any;
 export class EmbeddingService {
   private static instance: EmbeddingService;
   private pipeline: FeatureExtractionPipeline | null = null;
-  private currentModel: string | null = null;
+  private currentModel: string = DEFAULTS.EMBEDDING_MODEL;
+  private lastSuccessfulModel: string | null = null;
   private initMutex: Mutex = new Mutex();
   private initPromise: Promise<void> | null = null;
   private logger: Logger;
@@ -76,11 +77,51 @@ export class EmbeddingService {
 
   /**
    * Initialize the embedding model with mutex to prevent race conditions
+   * @param modelName - Optional explicit embedding model name
    */
   public async initialize(modelName?: string): Promise<void> {
     const config = vscode.workspace.getConfiguration(CONFIG.ROOT);
-    const targetModel = modelName || config.get<string>(CONFIG.EMBEDDING_MODEL, 'Xenova/all-MiniLM-L6-v2');
+    const configuredModel = config.get<string>(CONFIG.EMBEDDING_MODEL);
 
+    // Priority:
+    // 1. Explicit parameter (for programmatic control, tests)
+    // 2. User's config setting (respect user preference)
+    // 3. Currently loaded model (avoid unnecessary reloads)
+    // 4. Default model (fallback)
+    const targetModel =
+      modelName ??
+      configuredModel ??
+      (this.pipeline ? this.currentModel : null) ??
+      DEFAULTS.EMBEDDING_MODEL;
+
+    try {
+      await this.initializeModel(targetModel);
+    } catch (error) {
+      const isConfigDrivenAttempt =
+        !modelName && !!configuredModel && configuredModel === targetModel;
+
+      if (isConfigDrivenAttempt) {
+        const fallbackModel =
+          this.lastSuccessfulModel ?? DEFAULTS.EMBEDDING_MODEL;
+
+        if (fallbackModel && fallbackModel !== targetModel) {
+          const fallbackReason = this.lastSuccessfulModel
+            ? `previously downloaded model "${fallbackModel}"`
+            : `default model "${fallbackModel}"`;
+          const message = `RAGnarōk: Model "${targetModel}" could not be loaded. Falling back to ${fallbackReason}.`;
+          this.logger.warn(message);
+          vscode.window.showWarningMessage(message);
+
+          await this.initializeModel(fallbackModel);
+          return;
+        }
+      }
+
+      throw error;
+    }
+  }
+
+  private async initializeModel(targetModel: string): Promise<void> {
     // Already initialized with the same model
     if (this.pipeline && this.currentModel === targetModel) {
       this.logger.debug(`Model ${targetModel} already initialized`);
@@ -88,7 +129,7 @@ export class EmbeddingService {
     }
 
     // Use mutex to prevent concurrent initializations
-    return this.initMutex.runExclusive(async () => {
+    await this.initMutex.runExclusive(async () => {
       // Double-check after acquiring lock
       if (this.pipeline && this.currentModel === targetModel) {
         this.logger.debug(`Model ${targetModel} initialized while waiting for lock`);
@@ -99,7 +140,8 @@ export class EmbeddingService {
       if (this.initPromise) {
         this.logger.debug('Waiting for existing initialization to complete');
         await this.initPromise;
-        if (this.currentModel === targetModel) {
+        // Check if initialization succeeded and we have the right model
+        if (this.pipeline && this.currentModel === targetModel) {
           return;
         }
       }
@@ -155,10 +197,13 @@ export class EmbeddingService {
             // Validate the pipeline by testing with dummy text
             await this.pipeline('test', { pooling: 'mean', normalize: true });
 
-            this.currentModel = modelName;
             progress.report({ message: 'Model loaded successfully!' });
           }
         );
+
+        this.currentModel = modelName;
+        this.lastSuccessfulModel = modelName;
+        this.logger.info(`Embedding model initialized successfully: ${modelName}`);
 
         // Success - exit retry loop
         return;
@@ -167,9 +212,8 @@ export class EmbeddingService {
         lastError = error;
         this.logger.warn(`Initialization attempt ${attempt} failed:`, error.message);
 
-        // Clean up failed state
+        // Clean up failed state - keep currentModel unchanged during retries
         this.pipeline = null;
-        this.currentModel = null;
 
         // Don't retry on last attempt
         if (attempt < maxRetries) {
@@ -341,8 +385,10 @@ export class EmbeddingService {
 
   /**
    * Get the current model name
+   * Returns the name of the model that is currently loaded or will be loaded on next initialization.
+   * Returns the default model name if no specific model has been set.
    */
-  public getCurrentModel(): string | null {
+  public getCurrentModel(): string {
     return this.currentModel;
   }
 
@@ -354,7 +400,9 @@ export class EmbeddingService {
     this.logger.info('Clearing embedding model cache', { previousModel });
 
     this.pipeline = null;
-    this.currentModel = null;
+    // Reset to default model name so next initialization knows what to use
+    this.currentModel = DEFAULTS.EMBEDDING_MODEL;
+    this.lastSuccessfulModel = null;
 
     this.logger.info('Embedding model cache cleared successfully');
     vscode.window.showInformationMessage('Embedding model cache cleared. Model will reload on next use.');
@@ -369,7 +417,9 @@ export class EmbeddingService {
 
     // Clear pipeline
     this.pipeline = null;
-    this.currentModel = null;
+    // Reset to default model name for consistency
+    this.currentModel = DEFAULTS.EMBEDDING_MODEL;
+    this.lastSuccessfulModel = null;
 
     // Clear transformers module reference
     this.transformers = null;
@@ -380,4 +430,3 @@ export class EmbeddingService {
     this.logger.info('EmbeddingService disposed');
   }
 }
-

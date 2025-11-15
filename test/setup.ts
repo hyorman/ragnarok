@@ -3,34 +3,48 @@
  * This file is loaded before running any tests
  */
 
+import { DEFAULTS } from '../src/utils/constants';
+
 // Create a comprehensive VS Code API mock
+const ragConfig = {
+  embeddingModel: DEFAULTS.EMBEDDING_MODEL,
+  topK: 5,
+  chunkSize: 512,
+  chunkOverlap: 50,
+  logLevel: 'info',
+  retrievalStrategy: 'hybrid',
+  useAgenticMode: true,
+  agenticMaxIterations: 3,
+  agenticConfidenceThreshold: 0.7,
+  agenticIterativeRefinement: true,
+  agenticUseLLM: false,
+  agenticLLMModel: 'gpt-4o',
+  agenticIncludeWorkspaceContext: false,
+};
+
+const globalConfig = {
+  ...ragConfig,
+  pdfStructureDetection: 'heuristic',
+};
+
 const mockVscode = {
   workspace: {
     getConfiguration: (section?: string) => ({
       get: <T>(key: string, defaultValue?: T): T => {
-        // Return sensible defaults for RAGnarōk settings
-        const config: any = {
-          embeddingModel: 'Xenova/all-MiniLM-L6-v2',
-          topK: 5,
-          chunkSize: 512,
-          chunkOverlap: 50,
-          pdfStructureDetection: 'heuristic',
-          useAgenticMode: true,
-          'agentic.useLLM': false, // Disable LLM for unit tests
-          'agentic.retrievalStrategy': 'hybrid',
-          'agentic.maxIterations': 3,
-          'agentic.confidenceThreshold': 0.7,
-          'agentic.iterativeRefinement': true,
-          'agentic.llmModel': 'gpt-4o',
-          'agentic.includeWorkspaceContext': false, // Disable for unit tests
-        };
-
         if (section) {
-          const fullKey = `${section}.${key}`;
-          return config[fullKey] !== undefined ? config[fullKey] : (defaultValue as T);
+          const sectionConfig = section === 'ragnarok' ? ragConfig : globalConfig;
+          const scopedValue = (sectionConfig as any)[key];
+          if (scopedValue !== undefined) {
+            return scopedValue;
+          }
         }
 
-        return config[key] !== undefined ? config[key] : (defaultValue as T);
+        const globalValue = (globalConfig as any)[key];
+        if (globalValue !== undefined) {
+          return globalValue;
+        }
+
+        return defaultValue as T;
       },
       update: async () => undefined,
       inspect: () => undefined,

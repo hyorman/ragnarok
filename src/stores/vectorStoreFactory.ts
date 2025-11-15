@@ -46,6 +46,11 @@ export class VectorStoreFactory {
 
   constructor(embeddings: Embeddings, storageDir: string, embeddingModel: string) {
     this.logger = new Logger("VectorStoreFactory");
+
+    if (!embeddingModel) {
+      throw new Error("Embedding model is required but was not provided to VectorStoreFactory");
+    }
+
     this.embeddings = embeddings;
     this.storageDir = storageDir;
     this.embeddingModel = embeddingModel;
@@ -78,10 +83,13 @@ export class VectorStoreFactory {
   }
 
   public getEmbeddingModel(): string {
+    if (!this.embeddingModel) {
+      throw new Error("Embedding model is not set in VectorStoreFactory");
+    }
     return this.embeddingModel;
   }
 
-  public async createStore(config: VectorStoreConfig, initialDocuments?: LangChainDocument[]): Promise<VectorStore> {
+  public async createStore(config: VectorStoreConfig, initialDocuments?: LangChainDocument[]) {
     this.logger.info("Creating vector store", { topicId: config.topicId, documentCount: initialDocuments?.length || 0 });
 
     try {
@@ -113,7 +121,6 @@ export class VectorStoreFactory {
 
       this.storeCache.set(config.topicId, store);
       this.logger.info("Vector store created successfully", { topicId: config.topicId, hasInitialDocs: normalizedDocs.length > 0 });
-      return store;
     } catch (error) {
       this.logger.error("Failed to create vector store", { error: error instanceof Error ? error.message : String(error), config });
       throw error;
@@ -196,7 +203,7 @@ export class VectorStoreFactory {
     }
   }
 
-  public async saveStore(topicId: string, store: VectorStore, metadata: Partial<VectorStoreMetadata>): Promise<void> {
+  public async saveStore(topicId: string, metadata: Partial<VectorStoreMetadata>): Promise<void> {
     this.logger.info("Saving vector store metadata", { topicId });
     try {
       const metadataPath = this.getMetadataPath(topicId);

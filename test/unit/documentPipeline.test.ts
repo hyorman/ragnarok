@@ -8,14 +8,17 @@ import * as path from "path";
 import * as fs from "fs";
 import {
   DocumentPipeline,
-  PipelineOptions,
   PipelineProgress,
 } from "../../src/managers/documentPipeline";
+import { EmbeddingService } from "../../src/embeddings/embeddingService";
 
 describe("DocumentPipeline", function () {
   this.timeout(120000); // 2 minutes for embedding model initialization
 
   let pipeline: DocumentPipeline;
+  let embeddingService: EmbeddingService;
+  let originalModel: string | null = null;
+
   // When tests are compiled, they're in out/test/test/unit, so go up to workspace root
   const fixturesPath = path.join(__dirname, "../../../../test/fixtures");
   const tempStorageDir = path.join(__dirname, "../../../../test/.temp-storage");
@@ -26,12 +29,23 @@ describe("DocumentPipeline", function () {
       fs.mkdirSync(tempStorageDir, { recursive: true });
     }
 
+    // Get embedding service instance and save original model state
+    embeddingService = EmbeddingService.getInstance();
+    originalModel = embeddingService.getCurrentModel();
+
     // Initialize pipeline
     pipeline = new DocumentPipeline();
-    await pipeline.initialize(tempStorageDir, "Xenova/all-MiniLM-L6-v2");
+    await pipeline.initialize(tempStorageDir);
   });
 
-  after(function () {
+  after(async function () {
+    // Restore original embedding model state
+    if (originalModel && originalModel !== embeddingService.getCurrentModel()) {
+      await embeddingService.initialize(originalModel);
+    } else if (!originalModel) {
+      await embeddingService.clearCache();
+    }
+
     // Cleanup temp storage (optional - can keep for inspection)
     // if (fs.existsSync(tempStorageDir)) {
     //   fs.rmSync(tempStorageDir, { recursive: true, force: true });
@@ -41,7 +55,7 @@ describe("DocumentPipeline", function () {
   describe("Initialization", function () {
     it("should initialize successfully", async function () {
       const newPipeline = new DocumentPipeline();
-      await newPipeline.initialize(tempStorageDir, "Xenova/all-MiniLM-L6-v2");
+      await newPipeline.initialize(tempStorageDir);
 
       // If initialization succeeds, pipeline should be ready
       expect(newPipeline).to.be.an("object");
@@ -555,24 +569,37 @@ describe("DocumentPipeline", function () {
       const result1 = await pipeline.processDocument(testFile1, topicId);
       expect(result1.success).to.be.true;
 
-      // Create a new pipeline with a different model
-      const differentPipeline = new DocumentPipeline();
-      await differentPipeline.initialize(
-        tempStorageDir,
-        "Xenova/paraphrase-multilingual-MiniLM-L12-v2"
-      );
+      // Save current model state
+      const testOriginalModel = embeddingService.getCurrentModel();
 
-      // Try to add document to same topic with different model - should fail
-      const result2 = await differentPipeline.processDocument(
-        testFile2,
-        topicId
-      );
+      try {
+        // Initialize embedding service with a different model
+        const differentModel = "Xenova/paraphrase-multilingual-MiniLM-L12-v2";
+        await embeddingService.initialize(differentModel);
 
-      // Should fail due to model mismatch
-      expect(result2.success).to.be.false;
-      expect(result2.errors).to.be.an("array");
-      expect(result2.errors!.length).to.be.greaterThan(0);
-      expect(result2.errors![0]).to.include("Embedding model mismatch");
+        // The new pipeline will use the currently initialized model from the singleton
+        const differentPipeline = new DocumentPipeline();
+        await differentPipeline.initialize(tempStorageDir);
+
+        // Try to add document to same topic with different model - should fail
+        const result2 = await differentPipeline.processDocument(
+          testFile2,
+          topicId
+        );
+
+        // Should fail due to model mismatch
+        expect(result2.success).to.be.false;
+        expect(result2.errors).to.be.an("array");
+        expect(result2.errors!.length).to.be.greaterThan(0);
+        expect(result2.errors![0]).to.include("Embedding model mismatch");
+      } finally{
+        // Always restore original model state in finally block
+        if (testOriginalModel) {
+          await embeddingService.initialize(testOriginalModel);
+        } else {
+          await embeddingService.clearCache();
+        }
+      }
     });
   });
 });

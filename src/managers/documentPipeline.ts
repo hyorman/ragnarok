@@ -24,9 +24,6 @@ export interface PipelineOptions {
   /** Chunking options */
   chunkingOptions?: ChunkingOptions;
 
-  /** Embedding model to use */
-  embeddingModel?: string;
-
   /** Batch size for embedding generation */
   embeddingBatchSize?: number;
 
@@ -95,26 +92,26 @@ export class DocumentPipeline {
   }
 
   /**
-   * Initialize the pipeline with vector store factory
+   * Initialize the pipeline with vector store factory using the configured embedding model
    */
   public async initialize(
-    storageDir: string,
-    embeddingModel?: string
+    storageDir: string
   ): Promise<void> {
-    this.logger.info("Initializing pipeline", { storageDir, embeddingModel });
-
     try {
-      // Initialize embedding service
-      await this.embeddingService.initialize(embeddingModel);
+      await this.embeddingService.initialize();
 
       // Get the actual model name that was initialized
       const actualModelName = this.embeddingService.getCurrentModel();
-      if (!actualModelName) {
-        throw new Error("Failed to get current embedding model name");
-      }
+
+      this.logger.info("Initializing pipeline", { storageDir, embeddingModel: actualModelName });
 
       // Create LangChain-compatible embeddings wrapper
-      const embeddings = new TransformersEmbeddings({ modelName: actualModelName });
+      const embeddings = new TransformersEmbeddings();
+
+      // Dispose previous factory before creating a new one
+      if (this.vectorStoreFactory) {
+        this.vectorStoreFactory.dispose();
+      }
 
       this.vectorStoreFactory = new VectorStoreFactory(
         embeddings,
@@ -397,11 +394,8 @@ export class DocumentPipeline {
         message: `Creating vector store and embedding ${chunks.length} chunks...`,
       });
 
-      vectorStore = await this.vectorStoreFactory.createStore(
-        {
-          topicId,
-          storageDir: "", // Already set in factory
-        },
+      await this.vectorStoreFactory.createStore(
+        { topicId, storageDir: "" },
         chunks
       );
     }
@@ -413,18 +407,15 @@ export class DocumentPipeline {
       message: "Saving vector store...",
     });
 
-    const existingMetadata = await this.vectorStoreFactory.getStoreMetadata(
-      topicId
-    );
+    const existingMetadata = await this.vectorStoreFactory.getStoreMetadata(topicId);
 
-    await this.vectorStoreFactory.saveStore(topicId, vectorStore, {
-      documentCount: !existingMetadata
-        ? 1
-        : (existingMetadata.documentCount || 0) + 1,
-      chunkCount: !existingMetadata
-        ? chunks.length
-        : (existingMetadata.chunkCount || 0) + chunks.length,
-      createdAt: existingMetadata?.createdAt, // Preserve creation time
+    await this.vectorStoreFactory.saveStore(topicId, {
+      documentCount: (existingMetadata?.documentCount ?? 0) + 1,
+      chunkCount: (existingMetadata?.chunkCount ?? 0) + chunks.length,
+      createdAt: existingMetadata?.createdAt, // Preserved for existing stores, saveStore() will use Date.now() for new ones
+      embeddingModel:
+        existingMetadata?.embeddingModel ??
+        this.vectorStoreFactory.getEmbeddingModel(),
     });
   }
 
