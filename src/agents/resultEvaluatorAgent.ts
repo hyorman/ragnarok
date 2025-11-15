@@ -271,7 +271,7 @@ ${topResults}`;
     const avgConfidence = this.calculateAvgConfidence(results);
     const maxConfidence = results.length > 0 ? Math.max(...results.map((r) => r.score)) : 0;
     const hasEnoughResults = results.length >= minResults;
-    const isNearMaxIterations = currentIteration >= maxIterations - 1;
+    const isAtMaxIterations = currentIteration >= maxIterations;
 
     // Determine if sufficient
     const isSufficient =
@@ -285,7 +285,7 @@ ${topResults}`;
     let suggestedQuery: string | undefined;
     const gaps: string[] = [];
 
-    if (!isSufficient && !isNearMaxIterations) {
+    if (!isSufficient && !isAtMaxIterations) {
       shouldRetry = true;
 
       if (results.length === 0) {
@@ -454,4 +454,3 @@ ${topResults}`;
     return true;
   }
 }
-

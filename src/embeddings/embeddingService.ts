@@ -269,6 +269,17 @@ export class EmbeddingService {
           await this.initializeModel(fallbackModel);
           return;
         }
+
+        // If curated download failed and there are local models available, fall back to the first local model
+        const localModels = await this.listLocalModels();
+        if (localModels.length > 0) {
+          const localFallback = localModels[0];
+          const message = `RAGnarōk: Remote model "${targetModel}" could not be loaded. Falling back to local model "${localFallback}".`;
+          this.logger.warn(message);
+          vscode.window.showWarningMessage(message);
+          await this.initializeModel(localFallback);
+          return;
+        }
       }
 
       throw error;

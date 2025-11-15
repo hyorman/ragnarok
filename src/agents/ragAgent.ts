@@ -15,7 +15,6 @@ import { HybridRetriever, HybridSearchResult } from '../retrievers/hybridRetriev
 import { EnsembleRetrieverWrapper, EnsembleSearchResult } from '../retrievers/ensembleRetriever';
 import { BM25RetrieverWrapper, BM25SearchResult } from '../retrievers/bm25Retriever';
 import { Logger } from '../utils/logger';
-import { CONFIG } from '../utils/constants';
 import { RetrievalStrategy } from '../utils/types';
 
 export interface RAGAgentOptions {
@@ -427,7 +426,6 @@ export class RAGAgent {
     this.logger.debug('Starting iterative retrieval', {
       maxIterations: maxIter,
       threshold,
-      originalQuery: originalQuery.substring(0, 100),
     });
 
     while (iterations < maxIter) {
