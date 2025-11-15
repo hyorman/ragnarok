@@ -26,19 +26,41 @@ import { Logger } from '../utils/logger';
 // Type definitions for the dynamically imported transformers module
 type TransformersModule = any; // Dynamic import type - resolved at runtime
 type FeatureExtractionPipeline = any;
+export type AvailableModel = {
+  name: string;
+  source: 'curated' | 'local';
+  downloaded?: boolean;
+};
 
 export class EmbeddingService {
   private static instance: EmbeddingService;
+  private static readonly CURATED_MODELS = [
+    'Xenova/all-MiniLM-L6-v2',
+    'Xenova/all-MiniLM-L12-v2',
+    'Xenova/paraphrase-MiniLM-L6-v2',
+    'Xenova/multi-qa-MiniLM-L6-cos-v1',
+  ];
+  private static readonly DEFAULT_MODEL = EmbeddingService.CURATED_MODELS[0];
   private pipeline: FeatureExtractionPipeline | null = null;
-  private currentModel: string = DEFAULTS.EMBEDDING_MODEL;
+  private currentModel: string = EmbeddingService.DEFAULT_MODEL;
   private lastSuccessfulModel: string | null = null;
   private initMutex: Mutex = new Mutex();
   private initPromise: Promise<void> | null = null;
   private logger: Logger;
   private transformers: TransformersModule | null = null;
+  // Cache resolved local model path to avoid repeated resolution
+  private resolvedLocalModelPath: string | null = null;
 
   private constructor() {
     this.logger = new Logger('EmbeddingService');
+  }
+
+  /**
+   * Get the currently configured local model base path, if any.
+   * Returns null when the config is unset or invalid.
+   */
+  public getLocalModelPath(): string | null {
+    return this.resolvedLocalModelPath;
   }
 
   /**
@@ -61,15 +83,124 @@ export class EmbeddingService {
     // Use WebAssembly backend for ONNX (cross-platform ML inference)
     env.backends = {
       onnx: {
-        wasm: {
-          proxy: false,
-          numThreads: 1, // Single thread for stability
-        }
+        wasm: { proxy: false, numThreads: 2 }, // Increased to 2 threads for better performance
       }
     };
 
+    // If the extension has a configured local model base path, set it so
+    // transformers.js can resolve short model names (e.g. 'my-model' -> `${localModelPath}/my-model`).
+    try {
+      const config = vscode.workspace.getConfiguration(CONFIG.ROOT);
+      const resolved = this.resolveLocalModelPath(config);
+      if (resolved) {
+        // transformers.env.localModelPath is used by the runtime when given short model names
+        env.localModelPath = resolved;
+        this.resolvedLocalModelPath = resolved;
+        this.logger.info(`Transformers env.localModelPath set to ${resolved}`);
+      }
+    } catch (err: any) {
+      // Don't fail initialization just because the configured path is invalid; log and continue
+      this.logger.warn('Could not set transformers env.localModelPath from config:', err?.message ?? err);
+    }
+
     this.logger.info('EmbeddingService configured: WASM backend (ONNX), Sharp enabled (image processing)');
     return this.transformers;
+  }
+
+  /**
+   * List local models inside the configured local model path.
+   * Returns an array of model identifiers (directory names). If the configured
+   * path is empty or invalid, returns an empty array.
+   */
+  public async listLocalModels(): Promise<string[]> {
+    try {
+      const config = vscode.workspace.getConfiguration(CONFIG.ROOT);
+      const resolved = this.resolveLocalModelPath(config);
+      // Cache resolved path for other callers
+      this.resolvedLocalModelPath = resolved;
+
+      if (!resolved) return [];
+
+      const entries = await fs.promises.readdir(resolved, { withFileTypes: true });
+      // Consider directories as individual models; allow files that look like model files too
+      const models = entries
+        .filter((e) => e.isDirectory())
+        .map((d) => d.name)
+        .sort((a, b) => a.localeCompare(b));
+
+      return models;
+    } catch (err: any) {
+      this.logger.warn('Failed to list local models', err?.message ?? err);
+      return [];
+    }
+  }
+
+  /**
+   * List remote models that have already been downloaded to the transformers cache directory.
+   */
+  private async listDownloadedRemoteModels(): Promise<string[]> {
+    try {
+      const transformers = await this.loadTransformers();
+      const cacheDir = transformers?.env?.cacheDir;
+      if (!cacheDir) return [];
+
+      const normalizedCacheDir = path.isAbsolute(cacheDir)
+        ? cacheDir
+        : path.resolve(cacheDir);
+
+      if (!fs.existsSync(normalizedCacheDir)) {
+        this.logger.debug(`Transformers cache directory not found at ${normalizedCacheDir}`);
+        return [];
+      }
+
+      const ownerEntries = await fs.promises.readdir(normalizedCacheDir, { withFileTypes: true });
+      const downloadedModels: string[] = [];
+
+      for (const owner of ownerEntries) {
+        if (!owner.isDirectory()) continue;
+
+        const ownerPath = path.join(normalizedCacheDir, owner.name);
+        try {
+          const modelEntries = await fs.promises.readdir(ownerPath, { withFileTypes: true });
+          for (const model of modelEntries) {
+            if (model.isDirectory()) {
+              downloadedModels.push(`${owner.name}/${model.name}`);
+            }
+          }
+        } catch (err: any) {
+          // Skip folders we cannot read but keep processing the rest
+          this.logger.debug(`Unable to inspect cached models under ${ownerPath}`, err?.message ?? err);
+        }
+      }
+
+      return downloadedModels.sort((a, b) => a.localeCompare(b));
+    } catch (err: any) {
+      this.logger.warn('Failed to list downloaded remote models', err?.message ?? err);
+      return [];
+    }
+  }
+
+  /**
+   * Combine configured local models with any remote models already downloaded to disk.
+   */
+  public async listAvailableModels(): Promise<AvailableModel[]> {
+    const available: AvailableModel[] = [];
+    const downloaded = new Set(await this.listDownloadedRemoteModels());
+
+    for (const name of EmbeddingService.CURATED_MODELS) {
+      available.push({
+        name,
+        source: 'curated',
+        downloaded: downloaded.has(name),
+      });
+    }
+
+    const localModels = await this.listLocalModels();
+    for (const name of localModels) {
+      available.push({ name, source: 'local', downloaded: true });
+    }
+
+    return available;
   }
 
   public static getInstance(): EmbeddingService {
@@ -109,43 +240,23 @@ export class EmbeddingService {
    * @param modelName - Optional explicit embedding model name
    */
   public async initialize(modelName?: string): Promise<void> {
-    const config = vscode.workspace.getConfiguration(CONFIG.ROOT);
-    const configuredModel = config.get<string>(CONFIG.EMBEDDING_MODEL);
-    let localModelPath: string | null = null;
-    if (!modelName) {
-      try {
-        localModelPath = this.resolveLocalModelPath(config);
-      } catch (error) {
-        this.logger.error('Invalid local embedding model path configuration', error);
-        throw error;
-      }
-    }
 
     // Priority:
     // 1. Explicit parameter (for programmatic control, tests)
-    // 2. Explicit local model path from config (overrides remote identifier)
-    // 3. User's remote config setting (respect user preference)
-    // 4. Currently loaded model (avoid unnecessary reloads)
-    // 5. Default model (fallback)
+    // 2. Currently loaded model (avoid unnecessary reloads)
+    // 3. Default model (fallback)
     const targetModel =
       modelName ??
-      localModelPath ??
-      configuredModel ??
       (this.pipeline ? this.currentModel : null) ??
-      DEFAULTS.EMBEDDING_MODEL;
+      EmbeddingService.DEFAULT_MODEL;
 
     try {
       await this.initializeModel(targetModel);
     } catch (error) {
-      const isConfigDrivenAttempt =
-        !modelName && (
-          (localModelPath && localModelPath === targetModel) ||
-          (!!configuredModel && configuredModel === targetModel)
-        );
+      const isConfigDrivenAttempt = !modelName;
 
       if (isConfigDrivenAttempt) {
-        const fallbackModel =
-          this.lastSuccessfulModel ?? DEFAULTS.EMBEDDING_MODEL;
+        const fallbackModel = this.lastSuccessfulModel ?? EmbeddingService.DEFAULT_MODEL;
 
         if (fallbackModel && fallbackModel !== targetModel) {
           const fallbackReason = this.lastSuccessfulModel
@@ -448,7 +559,7 @@ export class EmbeddingService {
 
     this.pipeline = null;
     // Reset to default model name so next initialization knows what to use
-    this.currentModel = DEFAULTS.EMBEDDING_MODEL;
+    this.currentModel = EmbeddingService.DEFAULT_MODEL;
     this.lastSuccessfulModel = null;
 
     this.logger.info('Embedding model cache cleared successfully');
@@ -465,7 +576,7 @@ export class EmbeddingService {
     // Clear pipeline
     this.pipeline = null;
     // Reset to default model name for consistency
-    this.currentModel = DEFAULTS.EMBEDDING_MODEL;
+    this.currentModel = EmbeddingService.DEFAULT_MODEL;
     this.lastSuccessfulModel = null;
 
     // Clear transformers module reference

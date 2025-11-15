@@ -28,22 +28,10 @@
     "configuration": {
       "title": "RAGnarōk",
       "properties": {
-        "ragnarok.embeddingModel": {
-          "type": "string",
-          "default": "Xenova/all-MiniLM-L6-v2",
-          "description": "Sentence transformer model to use for embeddings",
-          "enum": [
-            "Xenova/all-MiniLM-L6-v2",
-            "Xenova/all-MiniLM-L12-v2",
-            "Xenova/paraphrase-MiniLM-L6-v2",
-            "Xenova/multi-qa-MiniLM-L6-cos-v1"
-          ],
-          "order": 1
-        },
         "ragnarok.localModelPath": {
           "type": "string",
           "default": "",
-          "markdownDescription": "Absolute path to a folder containing a locally downloaded Transformers.js-compatible embedding model. When set, this overrides `ragnarok.embeddingModel` and RAGnarōk loads weights from disk instead of downloading them on demand.",
+          "markdownDescription": "Absolute path to a folder containing a locally downloaded Transformers.js-compatible embedding model. Models in this folder appear in the tree view and can be selected directly.",
           "order": 2
         },
         "ragnarok.topK": {
@@ -176,11 +164,6 @@
         "title": "Delete Topic",
         "category": "RAG",
         "icon": "$(trash)"
-      },
-      {
-        "command": "ragnarok.listTopics",
-        "title": "List All Topics",
-        "category": "RAG"
       },
       {
         "command": "ragnarok.addDocument",
