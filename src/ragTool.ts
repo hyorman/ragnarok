@@ -41,10 +41,10 @@ export class RAGTool {
     const ragTool = vscode.lm.registerTool(TOOLS.RAG_QUERY, {
       invoke: async (options: vscode.LanguageModelToolInvocationOptions<RAGQueryParams>) => {
         const params = options.input;
-        const result = await tool.executeQuery(params);
-        return new vscode.LanguageModelToolResult([
-          new vscode.LanguageModelTextPart(JSON.stringify(result, null, 2))
-        ]);
+                  const result = await tool.executeQuery(params);
+          return new vscode.LanguageModelToolResult([
+            new vscode.LanguageModelTextPart(JSON.stringify(result, null, 2))
+          ]);
       },
       prepareInvocation: async (
         options: vscode.LanguageModelToolInvocationPrepareOptions<RAGQueryParams>
@@ -233,7 +233,12 @@ export class RAGTool {
 
     // Get vector store from TopicManager
     const topicManager = await this.topicManager;
-    const vectorStore = await topicManager.getVectorStore(topicId);
+    let vectorStore;
+    try {
+      vectorStore = await topicManager.getVectorStore(topicId);
+    } catch (error) {
+      throw new Error(`Failed to load vector store for topic: ${topicId}. Error: ${error instanceof Error ? error.message : String(error)}`);
+    }
     if (!vectorStore) {
       throw new Error(`Failed to load vector store for topic: ${topicId}`);
     }
@@ -366,4 +371,3 @@ export class RAGTool {
     };
   }
 }
-

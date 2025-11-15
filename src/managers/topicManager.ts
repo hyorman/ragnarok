@@ -525,7 +525,7 @@ export class TopicManager {
         error: error instanceof Error ? error.message : String(error),
         topicId,
       });
-      return null;
+      throw error;
     }
   }
 
