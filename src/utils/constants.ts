@@ -19,7 +19,6 @@ export const EXTENSION = {
 export const CONFIG = {
   ROOT: "ragnarok",
   // Basic configuration
-  EMBEDDING_MODEL: "embeddingModel",
   LOCAL_MODEL_PATH: "localModelPath",
   TOP_K: "topK",
   CHUNK_SIZE: "chunkSize",
@@ -40,7 +39,6 @@ export const CONFIG = {
  * Default configuration values
  */
 export const DEFAULTS = {
-  EMBEDDING_MODEL: "Xenova/all-MiniLM-L6-v2",
   LOCAL_MODEL_PATH: "",
 } as const;
 
@@ -50,12 +48,12 @@ export const DEFAULTS = {
 export const COMMANDS = {
   CREATE_TOPIC: "ragnarok.createTopic",
   DELETE_TOPIC: "ragnarok.deleteTopic",
-  LIST_TOPICS: "ragnarok.listTopics",
   ADD_DOCUMENT: "ragnarok.addDocument",
   ADD_GITHUB_REPO: "ragnarok.addGithubRepo",
   REFRESH_TOPICS: "ragnarok.refreshTopics",
   CLEAR_MODEL_CACHE: "ragnarok.clearModelCache",
   CLEAR_DATABASE: "ragnarok.clearDatabase",
+  SET_EMBEDDING_MODEL: "ragnarok.setEmbeddingModel",
   // GitHub token management
   ADD_GITHUB_TOKEN: "ragnarok.addGithubToken",
   LIST_GITHUB_TOKENS: "ragnarok.listGithubTokens",

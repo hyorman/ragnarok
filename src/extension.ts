@@ -126,7 +126,6 @@ export async function activate(context: vscode.ExtensionContext) {
     // Register configuration change listener for embedding model
     const configChangeDisposable = vscode.workspace.onDidChangeConfiguration(
       async (event) => {
-        const embeddingModelSetting = `${CONFIG.ROOT}.${CONFIG.EMBEDDING_MODEL}`;
         const localModelPathSetting = `${CONFIG.ROOT}.${CONFIG.LOCAL_MODEL_PATH}`;
         const treeViewConfigPaths = [
           `${CONFIG.ROOT}.${CONFIG.RETRIEVAL_STRATEGY}`,
@@ -138,10 +137,9 @@ export async function activate(context: vscode.ExtensionContext) {
         ];
 
         if (
-          event.affectsConfiguration(embeddingModelSetting) ||
           event.affectsConfiguration(localModelPathSetting)
         ) {
-          logger.info("Embedding model configuration changed");
+          logger.info("Embedding local model path changed");
 
           try {
             const applyModel = async (): Promise<void> => {
@@ -168,6 +166,8 @@ export async function activate(context: vscode.ExtensionContext) {
             };
 
             await applyModel();
+            // Refresh the tree view so local models / current model are visible
+            treeDataProvider.refresh();
           } catch (error) {
             const errorMessage =
               error instanceof Error ? error.message : String(error);
