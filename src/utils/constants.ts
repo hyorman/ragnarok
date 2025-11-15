@@ -20,6 +20,7 @@ export const CONFIG = {
   ROOT: "ragnarok",
   // Basic configuration
   EMBEDDING_MODEL: "embeddingModel",
+  LOCAL_MODEL_PATH: "localModelPath",
   TOP_K: "topK",
   CHUNK_SIZE: "chunkSize",
   CHUNK_OVERLAP: "chunkOverlap",
@@ -33,6 +34,14 @@ export const CONFIG = {
   AGENTIC_USE_LLM: "agenticUseLLM",
   AGENTIC_LLM_MODEL: "agenticLLMModel",
   AGENTIC_INCLUDE_WORKSPACE: "agenticIncludeWorkspaceContext",
+} as const;
+
+/**
+ * Default configuration values
+ */
+export const DEFAULTS = {
+  EMBEDDING_MODEL: "Xenova/all-MiniLM-L6-v2",
+  LOCAL_MODEL_PATH: "",
 } as const;
 
 /**

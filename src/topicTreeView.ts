@@ -8,6 +8,7 @@ import { TopicManager } from "./managers/topicManager";
 import { Topic, Document, RetrievalStrategy } from "./utils/types";
 import { Logger } from "./utils/logger";
 import { CONFIG } from "./utils/constants";
+import { EmbeddingService } from "./embeddings/embeddingService";
 
 const logger = new Logger("TopicTreeView");
 
@@ -22,9 +23,11 @@ export class TopicTreeDataProvider
   > = this._onDidChangeTreeData.event;
 
   private topicManager: Promise<TopicManager>;
+  private embeddingService: EmbeddingService;
 
   constructor() {
     this.topicManager = TopicManager.getInstance();
+    this.embeddingService = EmbeddingService.getInstance();
   }
 
   refresh(): void {
@@ -94,6 +97,15 @@ export class TopicTreeDataProvider
   private async getConfigurationItems(): Promise<TopicTreeItem[]> {
     const config = vscode.workspace.getConfiguration(CONFIG.ROOT);
     const items: TopicTreeItem[] = [];
+
+    // Embedding model (actual model currently loaded)
+    const currentModel = this.embeddingService.getCurrentModel();
+    items.push(
+      new TopicTreeItem(
+        { key: "embedding-model", value: currentModel },
+        "config-item"
+      )
+    );
 
     // Retrieval strategy (applies to all modes)
     const strategy = config.get<string>(CONFIG.RETRIEVAL_STRATEGY, "hybrid");
@@ -261,6 +273,8 @@ export class TopicTreeItem extends vscode.TreeItem {
             ? "🔍 BM25"
             : "❓ Unknown"
         }`;
+      case "embedding-model":
+        return `Embedding Model: ${value}`;
       case "max-iterations":
         return `Max Iterations: ${value}`;
       case "confidence-threshold":
