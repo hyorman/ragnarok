@@ -20,12 +20,11 @@ import { VectorStoreFactory } from "../stores/vectorStoreFactory";
 import { EmbeddingService } from "../embeddings/embeddingService";
 import { TransformersEmbeddings } from "../embeddings/langchainEmbeddings";
 import { Logger } from "../utils/logger";
-import { EXTENSION, CONFIG } from "../utils/constants";
+import { EXTENSION } from "../utils/constants";
 
 export interface CreateTopicOptions {
   name: string;
   description?: string;
-  embeddingModel?: string;
   initialDocuments?: string[];
 }
 
@@ -48,6 +47,11 @@ export interface AddDocumentResult {
 export class TopicManager {
   private static instance: TopicManager;
   private static initPromise: Promise<void> | null = null;
+
+  // Callback registry for external components to register cleanup functions
+  // This allows TopicManager to notify other components (like RAGTool) without creating circular dependencies
+  private static agentCacheCleanupCallback: ((topicId: string) => void) | null = null;
+
   private context: vscode.ExtensionContext;
   private logger: Logger;
   private topicsIndex: TopicsIndex | null = null;
@@ -87,8 +91,23 @@ export class TopicManager {
 
     // Wait for initialization to complete
     if (TopicManager.initPromise) {
-      await TopicManager.initPromise;
-      TopicManager.initPromise = null;
+      try {
+        await TopicManager.initPromise;
+      } catch (error) {
+        // Clear instance on failure to allow retry
+        TopicManager.instance = null as any;
+        TopicManager.initPromise = null;
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        throw new Error(`TopicManager initialization failed: ${errorMessage}`);
+      } finally {
+        TopicManager.initPromise = null;
+      }
+    }
+
+    // Verify initialization succeeded
+    if (!TopicManager.instance.isInitialized) {
+      TopicManager.instance = null as any;
+      throw new Error("TopicManager initialization failed - instance is not initialized");
     }
 
     return TopicManager.instance;
@@ -109,33 +128,29 @@ export class TopicManager {
       // Ensure storage directory exists
       await this.ensureStorageDirectory();
 
-      // Load topics index
-      await this.loadTopicsIndex();
+      // Ensure embedding service is initialized so we know the active model
+      await this.embeddingService.initialize();
 
-      // Get embedding model from config
-      const config = vscode.workspace.getConfiguration(CONFIG.ROOT);
-      const embeddingModel = config.get<string>(
-        CONFIG.EMBEDDING_MODEL,
-        "Xenova/all-MiniLM-L6-v2"
-      );
+      // Load topics index (creates a new one if missing)
+      await this.loadTopicsIndex();
 
       // Initialize document pipeline
       const storageDir = this.getDatabaseDir();
-      await this.documentPipeline.initialize(storageDir, embeddingModel);
+      await this.documentPipeline.initialize(storageDir);
 
       // Create LangChain-compatible embeddings wrapper
-      const embeddings = new TransformersEmbeddings({ modelName: embeddingModel });
+      const embeddings = new TransformersEmbeddings();
 
       this.vectorStoreFactory = new VectorStoreFactory(
         embeddings,
         storageDir,
-        embeddingModel
+        this.topicsIndex!.modelName
       );
 
       this.isInitialized = true;
       this.logger.info("TopicManager initialized successfully", {
         topicCount: Object.keys(this.topicsIndex?.topics || {}).length,
-        embeddingModel,
+        embeddingModel: this.topicsIndex?.modelName,
       });
     } catch (error) {
       this.logger.error("Failed to initialize TopicManager", {
@@ -179,11 +194,6 @@ export class TopicManager {
       // Add to index
       this.topicsIndex.topics[topic.id] = topic;
       this.topicsIndex.lastUpdated = Date.now();
-
-      // Update embedding model if specified
-      if (options.embeddingModel) {
-        this.topicsIndex.modelName = options.embeddingModel;
-      }
 
       // Save index
       await this.saveTopicsIndex();
@@ -256,6 +266,8 @@ export class TopicManager {
       // Save index
       await this.saveTopicsIndex();
 
+      this.notifyAgentCacheCleanup(topicId);
+
       this.logger.info("Topic deleted successfully", { topicId, topicName });
     } catch (error) {
       this.logger.error("Failed to delete topic", {
@@ -263,6 +275,25 @@ export class TopicManager {
         topicId,
       });
       throw error;
+    }
+  }
+
+  /**
+   * Notify registered components to clear cached agents for a topic
+   */
+  private notifyAgentCacheCleanup(topicId: string): void {
+    if (!TopicManager.agentCacheCleanupCallback) {
+      return;
+    }
+
+    try {
+      TopicManager.agentCacheCleanupCallback(topicId);
+    } catch (error) {
+      // Don't fail the caller if cache cleanup fails
+      this.logger.debug("Agent cache cleanup callback failed", {
+        topicId,
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
   }
 
@@ -471,6 +502,8 @@ export class TopicManager {
         throw new Error("TopicManager not initialized");
       }
 
+      await this.ensureEmbeddingModelCompatibility(topicId);
+
       // Check cache first
       const cachedStore = this.vectorStoreCache.get(topicId);
       if (cachedStore) {
@@ -492,8 +525,41 @@ export class TopicManager {
         error: error instanceof Error ? error.message : String(error),
         topicId,
       });
-      return null;
+      throw error;
     }
+  }
+
+  /**
+   * Prevent mixing embeddings generated with incompatible models
+   */
+  private async ensureEmbeddingModelCompatibility(topicId: string): Promise<void> {
+    if (!this.vectorStoreFactory) {
+      return;
+    }
+
+    const metadata = await this.vectorStoreFactory.getStoreMetadata(topicId);
+    if (!metadata?.embeddingModel) {
+      return;
+    }
+
+    const currentModel = this.embeddingService.getCurrentModel();
+    if (metadata.embeddingModel === currentModel) {
+      return;
+    }
+
+    const topicName = this.topicsIndex?.topics[topicId]?.name ?? topicId;
+
+    this.logger.warn("Embedding model mismatch detected for topic", {
+      topicId,
+      topicName,
+      storedModel: metadata.embeddingModel,
+      currentModel,
+    });
+
+    const message = `Topic "${topicName}" was indexed with embedding model "${metadata.embeddingModel}", but the current setting is "${currentModel}". ` +
+      `Switch back to "${metadata.embeddingModel}" or recreate the topic with the new model before running queries.`;
+
+    throw new Error(message);
   }
 
   /**
@@ -522,11 +588,18 @@ export class TopicManager {
       );
 
       let chunkCount = 0;
+      let embeddingModel =
+        this.embeddingService.getCurrentModel() ||
+        this.topicsIndex?.modelName ||
+        "unknown";
 
       try {
         const metadataJson = await fs.readFile(metadataPath, "utf-8");
         const metadata = JSON.parse(metadataJson);
         chunkCount = metadata.chunkCount || 0;
+        if (metadata.embeddingModel) {
+          embeddingModel = metadata.embeddingModel;
+        }
       } catch {
         // Metadata not available
       }
@@ -535,7 +608,7 @@ export class TopicManager {
         documentCount,
         chunkCount,
         lastUpdated: topic.updatedAt,
-        embeddingModel: this.topicsIndex.modelName,
+        embeddingModel,
       };
     } catch (error) {
       this.logger.error("Failed to get topic stats", {
@@ -547,16 +620,12 @@ export class TopicManager {
   }
 
   /**
-   * Clear vector store cache
+   * Register a callback function to be called when topics are deleted
+   * This allows external components (like RAGTool) to clean up their caches
+   * without creating circular dependencies
    */
-  public clearCache(topicId?: string): void {
-    if (topicId) {
-      this.vectorStoreCache.delete(topicId);
-      this.logger.debug("Cache cleared for topic", { topicId });
-    } else {
-      this.vectorStoreCache.clear();
-      this.logger.debug("All cache cleared");
-    }
+  public static registerAgentCacheCleanupCallback(callback: (topicId: string) => void): void {
+    TopicManager.agentCacheCleanupCallback = callback;
   }
 
   /**
@@ -565,6 +634,96 @@ export class TopicManager {
   public async refresh(): Promise<void> {
     this.logger.info("Refreshing topics");
     await this.loadTopicsIndex();
+  }
+
+  /**
+   * Reinitialize with the currently configured embedding model
+   * Called when the embedding model configuration changes
+   */
+  public async reinitializeWithNewModel(): Promise<void> {
+    this.logger.info("Reinitializing TopicManager with new embedding model");
+
+    try {
+      const topicIds = this.topicsIndex
+        ? Object.keys(this.topicsIndex.topics)
+        : [];
+
+      // 1. Dispose old factory first to release resources
+      if (this.vectorStoreFactory) {
+        this.vectorStoreFactory.dispose();
+      }
+
+      // 2. Clear local caches
+      this.vectorStoreCache.clear();
+
+      // 3. Notify external components to clear their caches
+      for (const topicId of topicIds) {
+        this.notifyAgentCacheCleanup(topicId);
+      }
+
+      // Reinitialize document pipeline with new model
+      const storageDir = this.getDatabaseDir();
+      await this.documentPipeline.initialize(storageDir);
+
+      // Create new LangChain-compatible embeddings wrapper
+      const embeddings = new TransformersEmbeddings();
+
+      // Update topics index with new model
+      const currentModel = this.embeddingService.getCurrentModel();
+
+      if (this.topicsIndex) {
+        this.topicsIndex.modelName = currentModel;
+        this.topicsIndex.lastUpdated = Date.now();
+        await this.saveTopicsIndex();
+
+        this.vectorStoreFactory = new VectorStoreFactory(
+          embeddings,
+          storageDir,
+          this.topicsIndex.modelName
+        );
+      }
+
+      this.logger.info("TopicManager reinitialized successfully with new model", {
+        embeddingModel: this.topicsIndex?.modelName,
+      });
+    } catch (error) {
+      this.logger.error("Failed to reinitialize TopicManager with new model", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
+    }
+  }
+
+  /**
+   * Dispose of all resources and clean up
+   * Should be called when TopicManager is no longer needed
+   */
+  public dispose(): void {
+    this.logger.info("Disposing TopicManager");
+
+    // Clear all caches
+    this.vectorStoreCache.clear();
+    this.topicDocuments.clear();
+
+    // Dispose of document pipeline
+    if (this.documentPipeline) {
+      this.documentPipeline.dispose();
+    }
+
+    // Dispose of vector store factory if it exists
+    if (this.vectorStoreFactory) {
+      this.vectorStoreFactory.dispose();
+      this.vectorStoreFactory = null;
+    }
+
+    // Clear references
+    this.topicsIndex = null;
+    this.isInitialized = false;
+
+    // Clear static callback
+    TopicManager.agentCacheCleanupCallback = null;
+
+    this.logger.info("TopicManager disposed");
   }
 
   // ==================== Private Methods ====================
@@ -616,15 +775,10 @@ export class TopicManager {
       // File doesn't exist, create new index
       this.logger.info("Topics index not found, creating new one");
 
-      const config = vscode.workspace.getConfiguration(CONFIG.ROOT);
-      const embeddingModel = config.get<string>(
-        CONFIG.EMBEDDING_MODEL,
-        "Xenova/all-MiniLM-L6-v2"
-      );
-
+      // Embedding service is already initialized by init()
       this.topicsIndex = {
         topics: {},
-        modelName: embeddingModel,
+        modelName: this.embeddingService.getCurrentModel(),
         lastUpdated: Date.now(),
       };
 

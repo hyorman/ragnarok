@@ -49,9 +49,6 @@ export class CommandHandler {
       vscode.commands.registerCommand(COMMANDS.DELETE_TOPIC, (item?: any) =>
         handler.deleteTopic(item)
       ),
-      vscode.commands.registerCommand(COMMANDS.LIST_TOPICS, () =>
-        handler.listTopics()
-      ),
       vscode.commands.registerCommand(COMMANDS.ADD_DOCUMENT, (item?: any) =>
         handler.addDocument(item)
       ),
@@ -63,6 +60,9 @@ export class CommandHandler {
       ),
       vscode.commands.registerCommand(COMMANDS.CLEAR_MODEL_CACHE, () =>
         handler.clearModelCache()
+      ),
+      vscode.commands.registerCommand(COMMANDS.SET_EMBEDDING_MODEL, (model) =>
+        handler.setEmbeddingModel(model)
       ),
       vscode.commands.registerCommand(COMMANDS.CLEAR_DATABASE, () =>
         handler.clearDatabase()
@@ -78,6 +78,25 @@ export class CommandHandler {
         handler.removeGithubToken()
       )
     );
+  }
+
+  /**
+   * Set embedding model in workspace configuration and initialize
+   */
+  public async setEmbeddingModel(model: string): Promise<void> {
+    try {
+      // Initialize the embedding model now
+      await this.embeddingService.initialize(model);
+
+      // Reinitialize topic manager vector stores
+      await this.topicManager.reinitializeWithNewModel();
+
+      vscode.window.showInformationMessage(`Embedding model set to "${model}"`);
+      this.treeDataProvider.refresh();
+    } catch (err) {
+      logger.error('Failed to set embedding model', err);
+      vscode.window.showErrorMessage(`Failed to set embedding model: ${err}`);
+    }
   }
 
   /**
@@ -182,35 +201,6 @@ export class CommandHandler {
     } catch (error) {
       logger.error(`Failed to delete topic: ${error}`);
       vscode.window.showErrorMessage(`Failed to delete topic: ${error}`);
-    }
-  }
-
-  /**
-   * List all topics
-   */
-  private async listTopics(): Promise<void> {
-    try {
-      const topics = await this.topicManager.getAllTopics();
-
-      if (topics.length === 0) {
-        vscode.window.showInformationMessage(
-          'No topics found. Create a topic using "RAG: Create New Topic" command.'
-        );
-        return;
-      }
-
-      const items = topics.map((t: any) => ({
-        label: t.name,
-        description: `${t.documentCount} document(s)`,
-        detail: t.description || "No description",
-      }));
-
-      await vscode.window.showQuickPick(items, {
-        placeHolder: "Available RAG Topics",
-      });
-    } catch (error) {
-      logger.error(`Failed to list topics: ${error}`);
-      vscode.window.showErrorMessage(`Failed to list topics: ${error}`);
     }
   }
 
@@ -608,7 +598,7 @@ export class CommandHandler {
       logger.error(`Failed to add GitHub repository: ${error}`);
       const errorMessage = error instanceof Error ? error.message : String(error);
       const errorStack = error instanceof Error ? error.stack : undefined;
-      
+
       vscode.window.showErrorMessage(
         `Failed to add GitHub repository:\n\n${errorMessage}${errorStack ? '\n\nStack:\n' + errorStack : ''}`,
         "OK"

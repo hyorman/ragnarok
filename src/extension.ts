@@ -9,7 +9,7 @@ import { EmbeddingService } from "./embeddings/embeddingService";
 import { RAGTool } from "./ragTool";
 import { CommandHandler } from "./commands";
 import { TopicTreeDataProvider } from "./topicTreeView";
-import { VIEWS, STATE, COMMANDS } from "./utils/constants";
+import { VIEWS, STATE, COMMANDS, CONFIG } from "./utils/constants";
 import { Logger } from "./utils/logger";
 import { GitHubTokenManager } from "./utils/githubTokenManager";
 
@@ -23,7 +23,7 @@ export async function activate(context: vscode.ExtensionContext) {
     const topicManager = await TopicManager.getInstance(context);
 
     // Initialize embedding service instance (will load model on first use)
-    EmbeddingService.getInstance();
+    const embeddingService = EmbeddingService.getInstance();
 
     // Initialize GitHub token manager
     GitHubTokenManager.initialize(context);
@@ -71,7 +71,7 @@ export async function activate(context: vscode.ExtensionContext) {
     try {
       // Check if Language Model API is available
       if (!vscode.lm || typeof vscode.lm.registerTool !== "function") {
-        console.warn(
+        logger.warn(
           "Language Model API not available. Requires VS Code 1.90+ and GitHub Copilot Chat."
         );
         vscode.window
@@ -90,12 +90,13 @@ export async function activate(context: vscode.ExtensionContext) {
           });
       } else {
         const ragToolDisposable = RAGTool.register(context);
-        console.log("RAG query tool registered successfully");
+        logger.info("RAG query tool registered successfully");
       }
     } catch (error) {
-      console.error("Failed to register RAG tool:", error);
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      logger.error("Failed to register RAG tool", { error: errorMessage });
       vscode.window.showWarningMessage(
-        `RAG tool registration failed: ${error}`
+        `RAG tool registration failed: ${errorMessage}`
       );
     }
 
@@ -122,6 +123,76 @@ export async function activate(context: vscode.ExtensionContext) {
       await context.globalState.update(STATE.HAS_SHOWN_WELCOME, true);
     }
 
+    // Register configuration change listener for embedding model
+    const configChangeDisposable = vscode.workspace.onDidChangeConfiguration(
+      async (event) => {
+        const localModelPathSetting = `${CONFIG.ROOT}.${CONFIG.LOCAL_MODEL_PATH}`;
+        const treeViewConfigPaths = [
+          `${CONFIG.ROOT}.${CONFIG.RETRIEVAL_STRATEGY}`,
+          `${CONFIG.ROOT}.${CONFIG.USE_AGENTIC_MODE}`,
+          `${CONFIG.ROOT}.${CONFIG.AGENTIC_USE_LLM}`,
+          `${CONFIG.ROOT}.${CONFIG.AGENTIC_MAX_ITERATIONS}`,
+          `${CONFIG.ROOT}.${CONFIG.AGENTIC_CONFIDENCE_THRESHOLD}`,
+          `${CONFIG.ROOT}.${CONFIG.AGENTIC_ITERATIVE_REFINEMENT}`,
+        ];
+
+        if (
+          event.affectsConfiguration(localModelPathSetting)
+        ) {
+          logger.info("Embedding local model path changed");
+
+          try {
+            const applyModel = async (): Promise<void> => {
+              await vscode.window.withProgress(
+                {
+                  location: vscode.ProgressLocation.Notification,
+                  title: `RAGnarōk: Updating embedding model...`,
+                },
+                async (progress) => {
+                  progress.report({ message: "Loading embedding model..." });
+                  await embeddingService.initialize();
+
+                  progress.report({ message: "Reinitializing services..." });
+                  await topicManager.reinitializeWithNewModel();
+                }
+              );
+
+              const model = embeddingService.getCurrentModel();
+
+              logger.info(`Embedding model ready: ${model}`);
+              vscode.window.showInformationMessage(
+                `RAGnarōk: Embedding model set to "${model}"`
+              );
+            };
+
+            await applyModel();
+            // Refresh the tree view so local models / current model are visible
+            treeDataProvider.refresh();
+          } catch (error) {
+            const errorMessage =
+              error instanceof Error ? error.message : String(error);
+            logger.error("Failed to handle embedding model configuration change", {
+              error: errorMessage,
+            });
+            vscode.window.showErrorMessage(
+              `RAGnarōk: Failed to update embedding model: ${errorMessage}`
+            );
+          }
+        }
+
+        const affectsTreeViewConfig = treeViewConfigPaths.some((configPath) =>
+          event.affectsConfiguration(configPath)
+        );
+        if (affectsTreeViewConfig) {
+          logger.debug(
+            "Configuration affecting tree view changed, refreshing view"
+          );
+          treeDataProvider.refresh();
+        }
+      }
+    );
+    context.subscriptions.push(configChangeDisposable);
+
     logger.info("Extension activation complete");
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
@@ -132,8 +203,20 @@ export async function activate(context: vscode.ExtensionContext) {
 
 export async function deactivate() {
   logger.info("RAGnarōk extension deactivating...");
-  // Clear any caches
-  const topicManager = await TopicManager.getInstance();
-  topicManager.clearCache();
-  logger.info("Extension deactivation complete");
+
+  try {
+    // Dispose of TopicManager (includes all caches and dependencies)
+    const topicManager = await TopicManager.getInstance();
+    topicManager.dispose();
+
+    // Dispose of EmbeddingService
+    const embeddingService = EmbeddingService.getInstance();
+    embeddingService.dispose();
+
+    logger.info("Extension deactivation complete");
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    logger.error("Error during deactivation", { error: errorMessage });
+    // Don't throw - deactivation should be best-effort
+  }
 }

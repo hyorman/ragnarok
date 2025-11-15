@@ -61,7 +61,7 @@ export class EnsembleRetrieverWrapper {
       // Fetch documents from vector store
       // Note: This requires fetching ALL documents which may be memory-intensive
       this.logger.warn('No documents provided, fetching from vector store. This may be slow for large datasets.');
-      
+
       try {
         // Fetch a large number of documents (approximate all)
         // This is a limitation of BM25 - it needs all docs in memory
@@ -172,7 +172,7 @@ export class EnsembleRetrieverWrapper {
     vectorResults.forEach((doc, index) => {
       const docId = this.getDocumentId(doc);
       const rrf = vectorWeight / (this.RRF_CONSTANT + index + 1);
-      
+
       if (scoreMap.has(docId)) {
         scoreMap.get(docId)!.score += rrf;
       } else {
@@ -184,7 +184,7 @@ export class EnsembleRetrieverWrapper {
     bm25Results.forEach((doc, index) => {
       const docId = this.getDocumentId(doc);
       const rrf = bm25Weight / (this.RRF_CONSTANT + index + 1);
-      
+
       if (scoreMap.has(docId)) {
         scoreMap.get(docId)!.score += rrf;
       } else {

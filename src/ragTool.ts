@@ -23,6 +23,12 @@ export class RAGTool {
     this.embeddingService = EmbeddingService.getInstance();
     this.topicManager = TopicManager.getInstance();
     this.ragAgents = new Map();
+
+    // Register cleanup callback with TopicManager to avoid circular dependency
+    // When topics are deleted, TopicManager will call this function
+    TopicManager.registerAgentCacheCleanupCallback((topicId: string) => {
+      this.clearAgentCache(topicId);
+    });
   }
 
   /**
@@ -37,8 +43,8 @@ export class RAGTool {
         const params = options.input;
         const result = await tool.executeQuery(params);
         return new vscode.LanguageModelToolResult([
-          new vscode.LanguageModelTextPart(JSON.stringify(result, null, 2))
-        ]);
+            new vscode.LanguageModelTextPart(JSON.stringify(result, null, 2))
+          ]);
       },
       prepareInvocation: async (
         options: vscode.LanguageModelToolInvocationPrepareOptions<RAGQueryParams>
@@ -50,8 +56,18 @@ export class RAGTool {
       }
     });
 
-    context.subscriptions.push(ragTool);
-    return ragTool;
+    // Create a composite disposable that disposes both the tool registration and the RAGTool instance
+    const compositeDisposable = vscode.Disposable.from(
+      ragTool,
+      {
+        dispose: () => {
+          tool.dispose();
+        }
+      }
+    );
+
+    context.subscriptions.push(compositeDisposable);
+    return compositeDisposable;
   }
 
   /**
@@ -65,6 +81,11 @@ export class RAGTool {
       const config = vscode.workspace.getConfiguration(CONFIG.ROOT);
       const configTopK = config.get<number>(CONFIG.TOP_K, 5);
       const topK = params.topK !== undefined ? params.topK : configTopK;
+
+      // Validate final topK value (after merging with config)
+      if (topK < 1 || topK > 20 || !Number.isInteger(topK)) {
+        throw new Error(`Invalid topK value: ${topK}. Must be an integer between 1 and 20.`);
+      }
 
       // Initialize services
       await this.embeddingService.initialize();
@@ -212,7 +233,12 @@ export class RAGTool {
 
     // Get vector store from TopicManager
     const topicManager = await this.topicManager;
-    const vectorStore = await topicManager.getVectorStore(topicId);
+    let vectorStore;
+    try {
+      vectorStore = await topicManager.getVectorStore(topicId);
+    } catch (error) {
+      throw new Error(`Failed to load vector store for topic: ${topicId}. Error: ${error instanceof Error ? error.message : String(error)}`);
+    }
     if (!vectorStore) {
       throw new Error(`Failed to load vector store for topic: ${topicId}`);
     }
@@ -224,6 +250,32 @@ export class RAGTool {
     this.ragAgents.set(topicId, agent);
 
     return agent;
+  }
+
+  /**
+   * Clear agent cache for a specific topic
+   * This should be called when topics are deleted to prevent memory leaks
+   * This is called by TopicManager when topics are deleted
+   */
+  private clearAgentCache(topicId: string): void {
+    const deleted = this.ragAgents.delete(topicId);
+    if (deleted) {
+      logger.debug(`Cleared agent cache for topic: ${topicId}`);
+    }
+  }
+
+  /**
+   * Dispose of all resources and clean up
+   * Should be called when RAGTool is no longer needed
+   */
+  public dispose(): void {
+    logger.info("Disposing RAGTool");
+
+    // Clear all agent caches
+    const agentCount = this.ragAgents.size;
+    this.ragAgents.clear();
+
+    logger.info(`RAGTool disposed - cleared ${agentCount} agent(s)`);
   }
 
   /**
@@ -319,4 +371,3 @@ export class RAGTool {
     };
   }
 }
-

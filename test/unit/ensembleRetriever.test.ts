@@ -78,13 +78,10 @@ describe('EnsembleRetriever', () => {
       expect(retriever.getDocumentCount()).to.equal(testDocuments.length);
     });
 
-    it('should throw error if no documents provided', async () => {
-      try {
-        await retriever.initialize([]);
-        expect.fail('Should have thrown error');
-      } catch (error: any) {
-        expect(error.message).to.include('requires documents');
-      }
+    it('should load documents from vector store when none provided', async () => {
+      await retriever.initialize([]);
+      expect(retriever.isInitialized()).to.be.true;
+      expect(retriever.getDocumentCount()).to.equal(testDocuments.length);
     });
 
     it('should report correct document count', async () => {

@@ -6,7 +6,7 @@
 
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.3-blue.svg)](https://www.typescriptlang.org/)
 [![LangChain](https://img.shields.io/badge/LangChain.js-0.2-green.svg)](https://js.langchain.com/)
-[![VS Code](https://img.shields.io/badge/VS%20Code-1.90+-purple.svg)](https://code.visualstudio.com/)
+[![VS Code](https://img.shields.io/badge/VS%20Code-1.105+-purple.svg)](https://code.visualstudio.com/)
 
 ---
 
@@ -49,6 +49,7 @@
 ### 🎨 **Enhanced UI**
 
 - **Configuration View**: See agentic settings at a glance
+- **Embedding Model Picker**: Tree view lists curated + local models (from `ragnarok.localModelPath`) with download status; click to switch
 - **Statistics Display**: Documents, chunks, store type, model info
 - **Progress Tracking**: Real-time updates during processing
 - **Rich Icons**: Visual hierarchy with emojis and theme icons
@@ -80,10 +81,16 @@ npm run compile
 #### From VSIX
 
 ```bash
-code --install-extension ragnarok-0.1.0.vsix
+code --install-extension ragnarok-0.1.6.vsix
 ```
 
 ### Basic Usage
+
+#### 0. (Optional) Choose/prepare your embedding model
+
+- Default: `Xenova/all-MiniLM-L6-v2`
+- Offline/local: set `ragnarok.localModelPath` to a folder containing Transformers.js-compatible models (each model in its own subfolder). The tree view will list those models alongside curated ones; click any entry to load it.
+- When you change the embedding model, existing topics keep their original embeddings—create a new topic if you need to ingest with the new model.
 
 #### 1. Create a Topic
 
@@ -207,6 +214,9 @@ The RAG tool will:
   // Embedding model to use (local Transformers.js models)
   "ragnarok.embeddingModel": "Xenova/all-MiniLM-L6-v2",
 
+  // Optional absolute/tilde path to a local Transformers.js model directory
+  "ragnarok.localModelPath": "",
+
   // Retrieval strategy
   "ragnarok.retrievalStrategy": "hybrid"
 }
@@ -241,12 +251,16 @@ The RAG tool will:
 }
 ```
 
+Set `ragnarok.localModelPath` to point at a folder that already contains compatible Transformers.js models (one subfolder per model—e.g., an ONNX export downloaded ahead of time). Entries found here appear in the tree view and can be selected directly, and this local path takes precedence over `ragnarok.embeddingModel`.
+
 **Available Embedding Models** (local, no API needed):
 
 - `Xenova/all-MiniLM-L6-v2` (default) - Fast, 384 dimensions
 - `Xenova/all-MiniLM-L12-v2` - More accurate, 384 dimensions
 - `Xenova/paraphrase-MiniLM-L6-v2` - Optimized for paraphrasing
 - `Xenova/multi-qa-MiniLM-L6-cos-v1` - Optimized for Q&A
+
+Any models you place under `ragnarok.localModelPath` show up in the tree view alongside these curated options (with download indicators) and can be loaded with one click.
 
 **LLM Models** (for agentic planning when enabled):
 
@@ -371,7 +385,7 @@ const topicManager = TopicManager.getInstance();
 const topic = await topicManager.createTopic({
   name: "My Topic",
   description: "Optional description",
-  embeddingModel: "Xenova/all-MiniLM-L6-v2", // optional, uses local model
+  embeddingModel: "Xenova/all-MiniLM-L6-v2", // optional override; defaults to global setting/local path
 });
 
 // Add documents
