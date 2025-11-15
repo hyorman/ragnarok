@@ -13,6 +13,7 @@ import { HybridRetriever } from '../../src/retrievers/hybridRetriever';
 import { EmbeddingService } from '../../src/embeddings/embeddingService';
 import { SemanticChunker } from '../../src/splitters/semanticChunker';
 import { QueryPlannerAgent } from '../../src/agents/queryPlannerAgent';
+import { DEFAULTS } from '../../src/utils/constants';
 
 // Simple in-memory VectorStore for testing
 class TestVectorStore extends VectorStore {
@@ -82,7 +83,7 @@ describe('Integration Tests', function () {
   before(async function () {
     // Initialize embedding service
     embeddingService = EmbeddingService.getInstance();
-    await embeddingService.initialize();
+    await embeddingService.initialize(DEFAULTS.EMBEDDING_MODEL);
     testEmbeddings = new TestEmbeddings(embeddingService);
   });
 

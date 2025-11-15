@@ -36,6 +36,13 @@ export const CONFIG = {
 } as const;
 
 /**
+ * Default configuration values
+ */
+export const DEFAULTS = {
+  EMBEDDING_MODEL: "Xenova/all-MiniLM-L6-v2",
+} as const;
+
+/**
  * Command identifiers
  */
 export const COMMANDS = {
