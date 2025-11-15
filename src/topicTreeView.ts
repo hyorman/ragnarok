@@ -7,7 +7,8 @@ import * as vscode from "vscode";
 import { TopicManager } from "./managers/topicManager";
 import { Topic, Document, RetrievalStrategy } from "./utils/types";
 import { Logger } from "./utils/logger";
-import { CONFIG } from "./utils/constants";
+import { CONFIG, COMMANDS } from "./utils/constants";
+import { EmbeddingService, type AvailableModel } from "./embeddings/embeddingService";
 
 const logger = new Logger("TopicTreeView");
 
@@ -22,9 +23,11 @@ export class TopicTreeDataProvider
   > = this._onDidChangeTreeData.event;
 
   private topicManager: Promise<TopicManager>;
+  private embeddingService: EmbeddingService;
 
   constructor() {
     this.topicManager = TopicManager.getInstance();
+    this.embeddingService = EmbeddingService.getInstance();
   }
 
   refresh(): void {
@@ -58,6 +61,28 @@ export class TopicTreeDataProvider
       } else if (element.type === "config-status") {
         // Show configuration items
         return this.getConfigurationItems();
+      } else if (element.type === "local-models") {
+        try {
+          const models = await this.embeddingService.listAvailableModels();
+          if (!models || models.length === 0) return [];
+          return models.map((model: AvailableModel) => {
+            // Strip leading dots or path separators so names display cleanly (e.g. '.my-model' -> 'my-model')
+            const display = (model.name ?? "").replace(/^[.\\/]+/, "");
+            return new TopicTreeItem(
+              {
+                key: "local-model",
+                value: model.name,
+                display,
+                source: model.source,
+                downloaded: !!model.downloaded,
+              },
+              "config-item"
+            );
+          });
+        } catch (err) {
+          logger.warn('Failed to load local models for tree children', err);
+          return [];
+        }
       } else if (element.type === "topic" && element.topic) {
         // Show statistics and documents for this topic
         const items: TopicTreeItem[] = [];
@@ -94,6 +119,25 @@ export class TopicTreeDataProvider
   private async getConfigurationItems(): Promise<TopicTreeItem[]> {
     const config = vscode.workspace.getConfiguration(CONFIG.ROOT);
     const items: TopicTreeItem[] = [];
+
+    // Embedding model (actual model currently loaded)
+    const currentModel = this.embeddingService.getCurrentModel();
+    items.push(
+      new TopicTreeItem(
+        { key: "embedding-model", value: currentModel },
+        "config-item"
+      )
+    );
+
+    // Embedding models (curated remote options + any discovered local models)
+    try {
+      const availableModels = await this.embeddingService.listAvailableModels();
+      if (availableModels && availableModels.length > 0) {
+        items.push(new TopicTreeItem({ key: "local-models", value: "" }, "local-models"));
+      }
+    } catch (err) {
+      logger.warn('Failed to enumerate local models for tree view', err);
+    }
 
     // Retrieval strategy (applies to all modes)
     const strategy = config.get<string>(CONFIG.RETRIEVAL_STRATEGY, "hybrid");
@@ -199,6 +243,7 @@ export class TopicTreeItem extends vscode.TreeItem {
       | "document"
       | "config-status"
       | "config-item"
+      | "local-models"
       | "topic-stats"
       | "stat-item"
   ) {
@@ -218,6 +263,8 @@ export class TopicTreeItem extends vscode.TreeItem {
         return `📄 ${data.name}`;
       case "config-status":
         return "⚙️ Configuration";
+      case "local-models":
+        return "🧠 Embedding Models";
       case "config-item":
         return TopicTreeItem.formatConfigLabel(data);
       case "topic-stats":
@@ -235,6 +282,7 @@ export class TopicTreeItem extends vscode.TreeItem {
     switch (type) {
       case "topic":
       case "config-status":
+      case "local-models":
       case "topic-stats":
         return vscode.TreeItemCollapsibleState.Collapsed;
       default:
@@ -261,6 +309,13 @@ export class TopicTreeItem extends vscode.TreeItem {
             ? "🔍 BM25"
             : "❓ Unknown"
         }`;
+      case "embedding-model":
+        return `🤖 Embedding Model: ${value}`;
+      case "local-models":
+        return `Embedding Models:`;
+      case "local-model":
+        // Show a download indicator for curated models that have not been pulled yet
+        return `${configData.source === "curated" && !configData.downloaded ? "🔻 " : "🔸"}${configData.display ?? value}`;
       case "max-iterations":
         return `Max Iterations: ${value}`;
       case "confidence-threshold":
@@ -315,7 +370,21 @@ export class TopicTreeItem extends vscode.TreeItem {
       case "config-item":
         this.tooltip = `Click to change this setting`;
         this.contextValue = "config-item";
-        this.iconPath = new vscode.ThemeIcon("symbol-property");
+        // this.iconPath = new vscode.ThemeIcon("symbol-property");
+
+        // If this is a discovered local model entry, make it clickable to load
+        if (data && data.key === 'local-model') {
+            this.command = {
+              command: COMMANDS.SET_EMBEDDING_MODEL,
+              title: 'Set Embedding Model',
+              arguments: [data.value],
+            };
+          const needsDownload = data.source === "curated" && !data.downloaded;
+          const sourceLabel = data.source === "curated" ? "curated" : "local";
+          this.tooltip = needsDownload
+            ? `Click to download and load ${sourceLabel} model: ${data.display ?? data.value}`
+            : `Click to load ${sourceLabel} model: ${data.display ?? data.value}`;
+        }
         break;
 
       case "topic-stats":

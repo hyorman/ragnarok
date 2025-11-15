@@ -2,7 +2,7 @@
   "name": "ragnarok",
   "displayName": "RAGnarōk - Local RAG for Copilot",
   "description": "Retrieval-Augmented Generation extension for VSCode with local sentence transformers and semantic chunking",
-  "version": "0.1.6",
+  "version": "0.2.0",
   "publisher": "hyorman",
   "icon": "assets/icon.png",
   "license": "MIT",
@@ -28,37 +28,35 @@
     "configuration": {
       "title": "RAGnarōk",
       "properties": {
-        "ragnarok.embeddingModel": {
+        "ragnarok.localModelPath": {
           "type": "string",
-          "default": "Xenova/all-MiniLM-L6-v2",
-          "description": "Sentence transformer model to use for embeddings",
-          "enum": [
-            "Xenova/all-MiniLM-L6-v2",
-            "Xenova/all-MiniLM-L12-v2",
-            "Xenova/paraphrase-MiniLM-L6-v2",
-            "Xenova/multi-qa-MiniLM-L6-cos-v1"
-          ]
+          "default": "",
+          "markdownDescription": "Absolute path to a folder containing a locally downloaded Transformers.js-compatible embedding model. Models in this folder appear in the tree view and can be selected directly.",
+          "order": 2
         },
         "ragnarok.topK": {
           "type": "number",
           "default": 5,
           "description": "Number of top results to return from RAG queries",
           "minimum": 1,
-          "maximum": 20
+          "maximum": 20,
+          "order": 3
         },
         "ragnarok.chunkSize": {
           "type": "number",
           "default": 512,
           "description": "Maximum size of text chunks for embedding (in characters)",
           "minimum": 100,
-          "maximum": 2000
+          "maximum": 2000,
+          "order": 4
         },
         "ragnarok.chunkOverlap": {
           "type": "number",
           "default": 50,
           "description": "Overlap between chunks (in characters)",
           "minimum": 0,
-          "maximum": 500
+          "maximum": 500,
+          "order": 5
         },
         "ragnarok.logLevel": {
           "type": "string",
@@ -75,7 +73,8 @@
             "Info: Standard informational messages (recommended)",
             "Warn: Only warnings and errors",
             "Error: Only error messages (least verbose)"
-          ]
+          ],
+          "order": 6
         },
         "ragnarok.retrievalStrategy": {
           "type": "string",
@@ -165,11 +164,6 @@
         "title": "Delete Topic",
         "category": "RAG",
         "icon": "$(trash)"
-      },
-      {
-        "command": "ragnarok.listTopics",
-        "title": "List All Topics",
-        "category": "RAG"
       },
       {
         "command": "ragnarok.addDocument",

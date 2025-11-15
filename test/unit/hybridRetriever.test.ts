@@ -33,32 +33,32 @@ class MockVectorStore extends VectorStore {
     query: number[],
     k: number
   ): Promise<[LangChainDocument, number][]> {
-    // Return all documents with mock scores
-    return this.documents.slice(0, k).map((doc, idx) => [doc, 1 - idx * 0.1]);
+    // Return distances where smaller values indicate higher similarity
+    return this.documents.slice(0, k).map((doc, idx) => [doc, idx * 0.1]);
   }
 
   async similaritySearchWithScore(
     query: string,
     k: number
   ): Promise<[LangChainDocument, number][]> {
-    // Simple mock scoring based on query term presence
+    // Simple mock distance scoring based on query term presence
     const queryLower = query.toLowerCase();
     const scored = this.documents.map((doc, idx) => {
       const content = doc.pageContent.toLowerCase();
-      // Base score inversely proportional to index
-      let score = 1 - (idx * 0.05);
+      // Base distance proportional to index
+      let distance = idx * 0.05;
 
-      // Boost if query terms are present
+      // Boost (reduce distance) if query terms are present
       if (content.includes(queryLower)) {
-        score += 0.2;
+        distance = Math.max(0, distance - 0.2);
       }
 
-      // Ensure score is always between 0 and 1
-      return [doc, Math.max(0, Math.min(1, score))] as [LangChainDocument, number];
+      // Ensure distance is never negative
+      return [doc, Math.max(0, distance)] as [LangChainDocument, number];
     });
 
-    // Sort by score and return top k
-    scored.sort((a, b) => b[1] - a[1]);
+    // Sort by distance (ascending) and return top k
+    scored.sort((a, b) => a[1] - b[1]);
     return scored.slice(0, k);
   }
 
