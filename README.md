@@ -207,6 +207,9 @@ The RAG tool will:
   // Embedding model to use (local Transformers.js models)
   "ragnarok.embeddingModel": "Xenova/all-MiniLM-L6-v2",
 
+  // Optional absolute/tilde path to a local Transformers.js model directory
+  "ragnarok.localModelPath": "",
+
   // Retrieval strategy
   "ragnarok.retrievalStrategy": "hybrid"
 }
@@ -240,6 +243,8 @@ The RAG tool will:
   "ragnarok.agenticIncludeWorkspaceContext": true
 }
 ```
+
+Set `ragnarok.localModelPath` to point at a folder that already contains a compatible Transformers.js model (for example, an ONNX export downloaded ahead of time) to fully opt out of on-demand downloads. When this path is provided it takes precedence over `ragnarok.embeddingModel`.
 
 **Available Embedding Models** (local, no API needed):
 
@@ -371,7 +376,7 @@ const topicManager = TopicManager.getInstance();
 const topic = await topicManager.createTopic({
   name: "My Topic",
   description: "Optional description",
-  embeddingModel: "Xenova/all-MiniLM-L6-v2", // optional, uses local model
+  embeddingModel: "Xenova/all-MiniLM-L6-v2", // optional override; defaults to global setting/local path
 });
 
 // Add documents

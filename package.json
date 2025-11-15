@@ -39,6 +39,12 @@
             "Xenova/multi-qa-MiniLM-L6-cos-v1"
           ]
         },
+        "ragnarok.localModelPath": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Absolute path to a folder containing a locally downloaded Transformers.js-compatible embedding model. When set, this overrides `ragnarok.embeddingModel` and RAGnarōk loads weights from disk instead of downloading them on demand.",
+          "order": 2
+        },
         "ragnarok.topK": {
           "type": "number",
           "default": 5,
