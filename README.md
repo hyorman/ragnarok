@@ -1,8 +1,20 @@
 <div align="center">
   <img src="./assets/icon.png" alt="RAGnarok icon" title="RAGnarok" width="120" height="120" />
-  <h1>RAGnarōk - Agentic RAG for VS Code</h1>
-  <p><strong>Production-ready local RAG with LangChain.js and intelligent query planning</strong></p>
+  <h1>RAGnarōk — Local, Agentic Knowledge RAG for VS Code</h1>
+  <p><strong>Find precise answers from your files and repos using local embeddings, smart query planning, and embedded vector search.</strong></p>
 </div>
+
+RAGnarōk helps developers, knowledge workers, and enterprise teams search, summarize, review, and answer questions over local documents, repositories, and the active VS Code workspace — with privacy and compliance in mind. Use it fully offline with local Transformers.js embeddings and LanceDB storage, or enable optional LLM-based planning and evaluation via VS Code Copilot models without any external API key for advanced query decomposition and result assessment.
+
+Why install?
+
+- Fast, private semantic search over PDFs, Markdown, HTML, and code
+- Enterprise-friendly: per-topic stores, file-based persistence, and secure token handling for private repos
+- Agentic query planning and evaluation: optionally use LLMs for decomposition, iterative refinement, and answer evaluation
+- Include workspace context: surface relevant open files, symbols, and code snippets to enrich answers
+- Code-review assistance: apply retrieved guidelines and documentation to review your code and get actionable suggestions
+- Embedded LanceDB vector store — no external servers required
+- Works offline with local Transformers.js embedding models
 
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.3-blue.svg)](https://www.typescriptlang.org/)
 [![LangChain](https://img.shields.io/badge/LangChain.js-0.2-green.svg)](https://js.langchain.com/)
@@ -12,10 +24,17 @@
 
 ## 🌟 Features
 
+### 🧩 **Local Embedding Model Support**
+
+- **Run embeddings locally**: Use Transformers.js models (ONNX/wasm) without external APIs.
+- **Local model picker**: Load models from `ragnarok.localModelPath` and switch models in the tree view.
+- **Offline & private**: Keep embeddings and inference on-device for privacy and compliance.
+- **Default model included**: Ships with `Xenova/all-MiniLM-L6-v2` by default for fast, 384-dimension embeddings.
+
 ### 🧠 **Agentic RAG with Query Planning**
 
 - **Intelligent Query Decomposition**: Automatically breaks complex queries into sub-queries
-- **LLM-Powered Planning**: Uses GPT-4o via VS Code LM API for advanced reasoning
+-- **LLM-Powered Planning**: Uses Copilot (VS Code LM API) models such as `gpt-4o` for advanced reasoning (Copilot required; no external API key). LLM usage is optional
 - **Heuristic Fallback**: Works without LLM using rule-based planning
 - **Iterative Refinement**: Confidence-based iteration for high-quality results
 - **Parallel/Sequential Execution**: Smart execution strategy based on query complexity
@@ -210,10 +229,6 @@ The RAG tool will:
 
   // Chunk overlap for context preservation
   "ragnarok.chunkOverlap": 50,
-
-  // Embedding model to use (local Transformers.js models)
-  "ragnarok.embeddingModel": "Xenova/all-MiniLM-L6-v2",
-
   // Optional absolute/tilde path to a local Transformers.js model directory
   "ragnarok.localModelPath": "",
 
@@ -243,7 +258,7 @@ The RAG tool will:
   // Enable iterative refinement
   "ragnarok.agenticIterativeRefinement": true,
 
-  // LLM model for planning (when agenticUseLLM is true)
+  // LLM model for planning (when agenticUseLLM is true) — models provided via VS Code Copilot/LM API
   "ragnarok.agenticLLMModel": "gpt-4o",
 
   // Include workspace context in queries
@@ -253,16 +268,18 @@ The RAG tool will:
 
 Set `ragnarok.localModelPath` to point at a folder that already contains compatible Transformers.js models (one subfolder per model—e.g., an ONNX export downloaded ahead of time). Entries found here appear in the tree view and can be selected directly, and this local path takes precedence over `ragnarok.embeddingModel`.
 
-**Available Embedding Models** (local, no API needed):
+**Available Embedding Models to Download** (local, no API needed):
 
 - `Xenova/all-MiniLM-L6-v2` (default) - Fast, 384 dimensions
 - `Xenova/all-MiniLM-L12-v2` - More accurate, 384 dimensions
 - `Xenova/paraphrase-MiniLM-L6-v2` - Optimized for paraphrasing
 - `Xenova/multi-qa-MiniLM-L6-cos-v1` - Optimized for Q&A
 
+_The extension ships with `Xenova/all-MiniLM-L6-v2` by default; to use other local models, set `ragnarok.localModelPath` or click the model name in tree view._
+
 Any models you place under `ragnarok.localModelPath` show up in the tree view alongside these curated options (with download indicators) and can be loaded with one click.
 
-**LLM Models** (for agentic planning when enabled):
+**LLM Models** (when agentic planning is enabled): models are available via VS Code Copilot / LM API (no external API key required).
 
 - `gpt-4o` (default) - Most intelligent
 - `gpt-4o-mini` - Faster, still capable
@@ -311,144 +328,6 @@ Any models you place under `ragnarok.localModelPath` show up in the tree view al
                    │ LangChain.js │
                    │ (Foundation) │
                    └──────────────┘
-```
-
-### Core Components
-
-#### **TopicManager** (`managers/topicManager.ts`)
-
-- Topic lifecycle management (CRUD operations)
-- Vector store per topic with caching
-- Coordinates document processing
-- Statistics and metadata tracking
-
-#### **DocumentPipeline** (`managers/documentPipeline.ts`)
-
-- End-to-end document processing
-- Load → Chunk → Embed → Store
-- Progress callbacks for UI
-- Error recovery and retry logic
-
-#### **RAGAgent** (`agents/ragAgent.ts`)
-
-- Main orchestrator for queries
-- Coordinates planner and retriever
-- Iterative refinement loop
-- Result deduplication and ranking
-
-#### **QueryPlannerAgent** (`agents/queryPlannerAgent.ts`)
-
-- Query complexity analysis
-- LLM-powered decomposition
-- Heuristic fallback planning
-- Structured output with Zod schemas
-
-#### **HybridRetriever** (`retrievers/hybridRetriever.ts`)
-
-- Vector + keyword search fusion
-- BM25-like scoring algorithm
-- Configurable weights
-- Result explanation generation
-
-#### **VectorStoreFactory** (`stores/vectorStoreFactory.ts`)
-
-- LanceDB embedded vector database
-- File-based persistence (no external server)
-- Per-topic vector stores
-- Store lifecycle management and caching
-
-#### **DocumentLoaderFactory** (`loaders/documentLoaderFactory.ts`)
-
-- Multi-format document loading
-- LangChain loader integration
-- Metadata enrichment
-- Batch processing support
-
-#### **SemanticChunker** (`splitters/semanticChunker.ts`)
-
-- Automatic strategy selection
-- Markdown-aware splitting
-- Code-aware splitting
-- Heading hierarchy preservation
-
----
-
-## 🔧 API Reference
-
-### TopicManager
-
-```typescript
-// Get singleton instance
-const topicManager = TopicManager.getInstance();
-
-// Create topic
-const topic = await topicManager.createTopic({
-  name: "My Topic",
-  description: "Optional description",
-  embeddingModel: "Xenova/all-MiniLM-L6-v2", // optional override; defaults to global setting/local path
-});
-
-// Add documents
-const results = await topicManager.addDocuments(
-  topic.id,
-  ["/path/to/doc1.pdf", "/path/to/doc2.md"],
-  {
-    onProgress: (progress) => {
-      console.log(`${progress.stage}: ${progress.progress}%`);
-    },
-  }
-);
-
-// Get topic stats
-const stats = await topicManager.getTopicStats(topic.id);
-// { documentCount, chunkCount, embeddingModel, lastUpdated }
-
-// Delete topic
-await topicManager.deleteTopic(topic.id);
-```
-
-### RAGAgent
-
-```typescript
-// Create agent
-const agent = new RAGAgent();
-const vectorStore = await topicManager.getVectorStore(topicId);
-await agent.initialize(vectorStore);
-
-// Agentic query
-const result = await agent.query("How do I use React hooks?", {
-  topK: 5,
-  enableIterativeRefinement: true,
-  maxIterations: 3,
-  confidenceThreshold: 0.7,
-  useLLM: true,
-  retrievalStrategy: "hybrid",
-});
-
-// Simple query (bypasses planning)
-const results = await agent.simpleQuery("React hooks", 5);
-```
-
-### HybridRetriever
-
-```typescript
-// Create retriever
-const retriever = new HybridRetriever();
-retriever.setVectorStore(vectorStore);
-
-// Hybrid search
-const results = await retriever.search("React hooks", {
-  k: 5,
-  vectorWeight: 0.7,
-  keywordWeight: 0.3,
-  minSimilarity: 0.3,
-});
-
-// Vector-only search
-const vectorResults = await retriever.vectorSearch("React hooks", 5);
-
-// Keyword-only search
-const keywordResults = await retriever.keywordSearch("React hooks", 5);
 ```
 
 ---
@@ -571,12 +450,6 @@ Complete: Documents ready for retrieval
 npm test
 ```
 
-### Test Coverage
-
-- Unit tests: 80%+ coverage target
-- Integration tests: Key workflows
-- Manual testing: UI and commands
-
 ---
 
 ## 🤝 Contributing
@@ -611,6 +484,6 @@ Built with:
 ---
 
 <div align="center">
-  <p>Made with ❤️ by the RAGnarōk team</p>
+  <p>Made with ❤️ by the hyorman</p>
   <p>⭐ Star us on GitHub if you find this useful!</p>
 </div>
