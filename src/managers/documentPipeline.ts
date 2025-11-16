@@ -17,6 +17,10 @@ import { EmbeddingService } from "../embeddings/embeddingService";
 import { TransformersEmbeddings } from "../embeddings/langchainEmbeddings";
 import { VectorStoreFactory } from "../stores/vectorStoreFactory";
 import { Logger } from "../utils/logger";
+import {
+  DocumentCleaner,
+  DocumentCleaningOptions,
+} from "../transformers/documentCleaner";
 
 export interface PipelineOptions {
   /** Document loading options */
@@ -24,6 +28,9 @@ export interface PipelineOptions {
 
   /** Chunking options */
   chunkingOptions?: ChunkingOptions;
+
+  /** Cleaning options */
+  cleaningOptions?: DocumentCleaningOptions;
 
   /** Batch size for embedding generation */
   embeddingBatchSize?: number;
@@ -79,6 +86,7 @@ export interface PipelineResult {
 export class DocumentPipeline {
   private logger: Logger;
   private documentLoader: DocumentLoaderFactory;
+  private documentCleaner: DocumentCleaner;
   private semanticChunker: SemanticChunker;
   private embeddingService: EmbeddingService;
   private vectorStoreFactory: VectorStoreFactory | null = null;
@@ -86,6 +94,7 @@ export class DocumentPipeline {
   constructor() {
     this.logger = new Logger("DocumentPipeline");
     this.documentLoader = new DocumentLoaderFactory();
+    this.documentCleaner = new DocumentCleaner();
     this.semanticChunker = new SemanticChunker();
     this.embeddingService = EmbeddingService.getInstance();
 
@@ -225,7 +234,50 @@ export class DocumentPipeline {
         throw new Error(errorMessage);
       }
 
-      // Stage 2: Chunk documents
+      // Stage 2: Clean documents before chunking
+      const cleaner =
+        options.cleaningOptions !== undefined
+          ? new DocumentCleaner(options.cleaningOptions)
+          : this.documentCleaner;
+
+      const cleaningStart = Date.now();
+      const cleanedDocs = await cleaner.cleanDocuments(loadedDocs);
+      const filteredDocs = cleanedDocs.filter(
+        (doc) => doc.pageContent.trim().length > 0
+      );
+      const droppedDocs = cleanedDocs.length - filteredDocs.length;
+
+      if (droppedDocs > 0) {
+        this.logger.info("Dropped empty/cleaned documents", {
+          droppedDocs,
+          keptDocs: filteredDocs.length,
+        });
+      }
+
+      this.logger.info("Documents cleaned", {
+        inputDocuments: loadedDocs.length,
+        cleanedDocuments: filteredDocs.length,
+      });
+
+      if (filteredDocs.length === 0) {
+        const errorMessage =
+          "All documents were removed by cleaning. Adjust cleaning options or input files.";
+        this.logger.error(errorMessage, {
+          filePaths,
+          cleaningOptions: options.cleaningOptions,
+        });
+        if (!result.errors) {
+          result.errors = [];
+        }
+        result.errors.push(errorMessage);
+        result.metadata.totalTime = Date.now() - startTime;
+        throw new Error(errorMessage);
+      }
+
+      // Include cleaning time in the loading stage to keep stage counts stable
+      result.metadata.stageTimings.loading += Date.now() - cleaningStart;
+
+      // Stage 3: Chunk documents
       const chunkStartTime = Date.now();
       this.reportProgress(options.onProgress, {
         stage: "chunking",
@@ -234,7 +286,7 @@ export class DocumentPipeline {
       });
 
       const chunkingResult = await this.semanticChunker.chunkDocuments(
-        loadedDocs,
+        filteredDocs,
         options.chunkingOptions
       );
 
@@ -244,7 +296,7 @@ export class DocumentPipeline {
       result.metadata.stageTimings.chunking = Date.now() - chunkStartTime;
 
       this.logger.info("Documents chunked", {
-        inputDocuments: loadedDocs.length,
+        inputDocuments: filteredDocs.length,
         chunkCount: chunkingResult.chunkCount,
         strategy: chunkingResult.strategy,
         time: result.metadata.stageTimings.chunking,
@@ -262,20 +314,20 @@ export class DocumentPipeline {
       // Log warning if no chunks were created
       if (chunkingResult.chunkCount === 0) {
         this.logger.warn("No chunks created from documents", {
-          inputDocuments: loadedDocs.length,
+          inputDocuments: filteredDocs.length,
           strategy: chunkingResult.strategy,
           chunkingOptions: options.chunkingOptions,
         });
       }
 
-      // Stage 3: Generate embeddings
+      // Stage 4: Generate embeddings
       this.reportProgress(options.onProgress, {
         stage: "embedding",
         progress: 50,
         message: "Generating embeddings...",
       });
 
-      // Stage 4: Store in vector database
+      // Stage 5: Store in vector database
       const storeStartTime = Date.now();
       this.reportProgress(options.onProgress, {
         stage: "storing",

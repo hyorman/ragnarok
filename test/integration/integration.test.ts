@@ -13,8 +13,8 @@ import { HybridRetriever } from '../../src/retrievers/hybridRetriever';
 import { EmbeddingService } from '../../src/embeddings/embeddingService';
 import { SemanticChunker } from '../../src/splitters/semanticChunker';
 import { QueryPlannerAgent } from '../../src/agents/queryPlannerAgent';
-import { DEFAULTS } from '../../src/utils/constants';
 
+const DEFAULT_EMBEDDING_MODEL = "Xenova/all-MiniLM-L6-v2";
 // Simple in-memory VectorStore for testing
 class TestVectorStore extends VectorStore {
   private docs: LangChainDocument[] = [];
@@ -83,7 +83,7 @@ describe('Integration Tests', function () {
   before(async function () {
     // Initialize embedding service
     embeddingService = EmbeddingService.getInstance();
-    await embeddingService.initialize(DEFAULTS.EMBEDDING_MODEL);
+    await embeddingService.initialize(DEFAULT_EMBEDDING_MODEL);
     testEmbeddings = new TestEmbeddings(embeddingService);
   });
 

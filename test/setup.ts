@@ -3,11 +3,10 @@
  * This file is loaded before running any tests
  */
 
-import { DEFAULTS } from '../src/utils/constants';
-
+const DEFAULT_EMBEDDING_MODEL = "Xenova/all-MiniLM-L6-v2";
 // Create a comprehensive VS Code API mock
 const ragConfig = {
-  embeddingModel: DEFAULTS.EMBEDDING_MODEL,
+  embeddingModel: DEFAULT_EMBEDDING_MODEL,
   topK: 5,
   chunkSize: 512,
   chunkOverlap: 50,
