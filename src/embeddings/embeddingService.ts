@@ -269,6 +269,34 @@ export class EmbeddingService {
           await this.initializeModel(fallbackModel);
           return;
         }
+
+        // If curated download failed and there are local models available, try them all sequentially
+        const localModels = await this.listLocalModels();
+        if (localModels.length > 0) {
+          this.logger.warn(`Remote model "${targetModel}" could not be loaded. Attempting local models: ${localModels.join(', ')}`);
+          // Let the user know we'll try local models
+          vscode.window.showWarningMessage(`RAGnarōk: Remote model "${targetModel}" could not be loaded. Trying local models...`);
+
+          // Try each local model until one initializes successfully
+          for (const local of localModels) {
+            try {
+              this.logger.info(`Attempting to initialize local model: ${local}`);
+              await this.initializeModel(local);
+              const successMsg = `RAGnarōk: Successfully initialized local model "${local}" after failing to load "${targetModel}".`;
+              this.logger.info(successMsg);
+              vscode.window.showInformationMessage(successMsg);
+              return;
+            } catch (localErr: any) {
+              this.logger.warn(`Failed to initialize local model "${local}":`, localErr?.message ?? localErr);
+              // continue to next local model
+            }
+          }
+
+          // If we exhausted local models, surface a consolidated error message and fall through to throw
+          const message = `RAGnarōk: Failed to initialize any local models after remote model "${targetModel}" failed.`;
+          this.logger.error(message);
+          vscode.window.showErrorMessage(message);
+        }
       }
 
       throw error;
