@@ -34,13 +34,53 @@ export type AvailableModel = {
 
 export class EmbeddingService {
   private static instance: EmbeddingService;
+  private static resolveDefaultModel(): string {
+    const curatedDefault = EmbeddingService.CURATED_MODELS[0];
+    const bundledRoot = path.resolve(__dirname, '../../../assets/models');
+
+    // Prefer the curated default if it is bundled with the extension
+    const curatedBundledPath = path.join(bundledRoot, curatedDefault);
+    if (fs.existsSync(curatedBundledPath)) {
+      return curatedDefault;
+    }
+
+    // Otherwise, pick the first model folder we find under assets/models (flat or owner/model)
+    if (fs.existsSync(bundledRoot)) {
+      try {
+        const owners = fs.readdirSync(bundledRoot, { withFileTypes: true });
+        for (const owner of owners) {
+          if (!owner.isDirectory()) continue;
+          const ownerPath = path.join(bundledRoot, owner.name);
+          // Flat layout: assets/models/<model>
+          const flatPath = ownerPath;
+          if (fs.existsSync(path.join(flatPath, 'config.json')) || fs.existsSync(path.join(flatPath, 'model.onnx'))) {
+            return owner.name;
+          }
+
+          // Nested layout: assets/models/<owner>/<model>
+          const models = fs.readdirSync(ownerPath, { withFileTypes: true });
+          for (const model of models) {
+            if (!model.isDirectory()) continue;
+            const modelPath = path.join(ownerPath, model.name);
+            if (fs.existsSync(path.join(modelPath, 'config.json')) || fs.existsSync(path.join(modelPath, 'model.onnx'))) {
+              return `${owner.name}/${model.name}`;
+            }
+          }
+        }
+      } catch {
+        // Ignore errors and fall back to curated default
+      }
+    }
+
+    return curatedDefault;
+  }
   private static readonly CURATED_MODELS = [
     'Xenova/all-MiniLM-L6-v2',
     'Xenova/all-MiniLM-L12-v2',
     'Xenova/paraphrase-MiniLM-L6-v2',
     'Xenova/multi-qa-MiniLM-L6-cos-v1',
   ];
-  private static readonly DEFAULT_MODEL = EmbeddingService.CURATED_MODELS[0];
+  private static readonly DEFAULT_MODEL = EmbeddingService.resolveDefaultModel();
   private pipeline: FeatureExtractionPipeline | null = null;
   private currentModel: string = EmbeddingService.DEFAULT_MODEL;
   private lastSuccessfulModel: string | null = null;
@@ -50,6 +90,9 @@ export class EmbeddingService {
   private transformers: TransformersModule | null = null;
   // Cache resolved local model path to avoid repeated resolution
   private resolvedLocalModelPath: string | null = null;
+  // Cache bundled model root (if present in packaged extension)
+  private bundledModelsRoot: string | null = null;
+  private bundledModelsRootChecked: boolean = false;
 
   private constructor() {
     this.logger = new Logger('EmbeddingService');
@@ -61,6 +104,80 @@ export class EmbeddingService {
    */
   public getLocalModelPath(): string | null {
     return this.resolvedLocalModelPath;
+  }
+
+  /**
+   * Resolve the path where bundled models would live inside the packaged extension
+   */
+  private getBundledModelsRoot(): string | null {
+    if (this.bundledModelsRootChecked) {
+      return this.bundledModelsRoot;
+    }
+
+    // Compiled file lives under <extensionRoot>/out/src/embeddings
+    const candidate = path.resolve(__dirname, '../../../assets/models');
+    this.bundledModelsRootChecked = true;
+
+    if (fs.existsSync(candidate)) {
+      this.bundledModelsRoot = candidate;
+      this.logger.info(`Detected bundled models at ${candidate}`);
+    } else {
+      this.bundledModelsRoot = null;
+      this.logger.debug(`No bundled models found at ${candidate}`);
+    }
+
+    return this.bundledModelsRoot;
+  }
+
+  /**
+   * Check if a directory contains model artifacts (config/tokenizer/weights)
+   */
+  private isModelDirectory(dir: string): boolean {
+    const markerFiles = [
+      'config.json',
+      'tokenizer.json',
+      'pytorch_model.bin',
+      'model.onnx',
+    ];
+
+    return markerFiles.some((file) => fs.existsSync(path.join(dir, file)));
+  }
+
+  /**
+   * Discover models in the provided base directory.
+   * Supports both flat (model/) and owner/model/ layouts.
+   */
+  private async discoverModels(basePath: string): Promise<string[]> {
+    const models: string[] = [];
+    const entries = await fs.promises.readdir(basePath, { withFileTypes: true });
+
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      const entryPath = path.join(basePath, entry.name);
+
+      if (this.isModelDirectory(entryPath)) {
+        models.push(entry.name);
+        continue;
+      }
+
+      // Look one level deeper for HuggingFace-style owner/model layout
+      let subEntries: fs.Dirent[] = [];
+      try {
+        subEntries = await fs.promises.readdir(entryPath, { withFileTypes: true });
+      } catch {
+        continue;
+      }
+
+      for (const sub of subEntries) {
+        if (!sub.isDirectory()) continue;
+        const subPath = path.join(entryPath, sub.name);
+        if (this.isModelDirectory(subPath)) {
+          models.push(`${entry.name}/${sub.name}`);
+        }
+      }
+    }
+
+    return models.sort((a, b) => a.localeCompare(b));
   }
 
   /**
@@ -89,18 +206,24 @@ export class EmbeddingService {
 
     // If the extension has a configured local model base path, set it so
     // transformers.js can resolve short model names (e.g. 'my-model' -> `${localModelPath}/my-model`).
+    let localModelPath: string | null = null;
     try {
       const config = vscode.workspace.getConfiguration(CONFIG.ROOT);
-      const resolved = this.resolveLocalModelPath(config);
-      if (resolved) {
-        // transformers.env.localModelPath is used by the runtime when given short model names
-        env.localModelPath = resolved;
-        this.resolvedLocalModelPath = resolved;
-        this.logger.info(`Transformers env.localModelPath set to ${resolved}`);
-      }
+      localModelPath = this.resolveLocalModelPath(config);
     } catch (err: any) {
       // Don't fail initialization just because the configured path is invalid; log and continue
       this.logger.warn('Could not set transformers env.localModelPath from config:', err?.message ?? err);
+    }
+
+    // Fallback to bundled models when no local path is configured
+    if (!localModelPath) {
+      localModelPath = this.getBundledModelsRoot();
+    }
+
+    if (localModelPath) {
+      env.localModelPath = localModelPath;
+      this.resolvedLocalModelPath = localModelPath;
+      this.logger.info(`Transformers env.localModelPath set to ${localModelPath}`);
     }
 
     this.logger.info('EmbeddingService configured: WASM backend (ONNX), Sharp enabled (image processing)');
@@ -121,16 +244,24 @@ export class EmbeddingService {
 
       if (!resolved) return [];
 
-      const entries = await fs.promises.readdir(resolved, { withFileTypes: true });
-      // Consider directories as individual models; allow files that look like model files too
-      const models = entries
-        .filter((e) => e.isDirectory())
-        .map((d) => d.name)
-        .sort((a, b) => a.localeCompare(b));
-
-      return models;
+      return await this.discoverModels(resolved);
     } catch (err: any) {
       this.logger.warn('Failed to list local models', err?.message ?? err);
+      return [];
+    }
+  }
+
+  /**
+   * List models that are bundled with the extension package (if present)
+   */
+  private async listBundledModels(): Promise<string[]> {
+    try {
+      const bundledRoot = this.getBundledModelsRoot();
+      if (!bundledRoot) return [];
+
+      return await this.discoverModels(bundledRoot);
+    } catch (err: any) {
+      this.logger.warn('Failed to list bundled models', err?.message ?? err);
       return [];
     }
   }
@@ -186,17 +317,30 @@ export class EmbeddingService {
   public async listAvailableModels(): Promise<AvailableModel[]> {
     const available: AvailableModel[] = [];
     const downloaded = new Set(await this.listDownloadedRemoteModels());
+    const bundled = new Set(await this.listBundledModels());
 
     for (const name of EmbeddingService.CURATED_MODELS) {
+      const isBundled = bundled.has(name);
       available.push({
         name,
-        source: 'curated',
-        downloaded: downloaded.has(name),
+        source: isBundled ? 'local' : 'curated',
+        downloaded: downloaded.has(name) || isBundled,
       });
+    }
+
+    // Include any bundled models that are not part of the curated list
+    for (const name of bundled) {
+      if (EmbeddingService.CURATED_MODELS.includes(name)) {
+        continue;
+      }
+      available.push({ name, source: 'local', downloaded: true });
     }
 
     const localModels = await this.listLocalModels();
     for (const name of localModels) {
+      if (available.some((m) => m.name === name && m.source === 'curated')) {
+        continue; // Avoid duplicates when the bundled model matches curated default
+      }
       available.push({ name, source: 'local', downloaded: true });
     }
 
@@ -236,6 +380,23 @@ export class EmbeddingService {
   }
 
   /**
+   * If the requested model is bundled with the extension, return its absolute path.
+   * Otherwise, return the original model identifier.
+   */
+  private resolveModelIdentifier(modelName: string): string {
+    const bundledRoot = this.getBundledModelsRoot();
+    if (bundledRoot) {
+      const bundledPath = path.join(bundledRoot, modelName);
+      if (fs.existsSync(bundledPath)) {
+        this.logger.debug(`Using bundled model for ${modelName} at ${bundledPath}`);
+        return bundledPath;
+      }
+    }
+
+    return modelName;
+  }
+
+  /**
    * Initialize the embedding model with mutex to prevent race conditions
    * @param modelName - Optional explicit embedding model name
    */
@@ -268,34 +429,6 @@ export class EmbeddingService {
 
           await this.initializeModel(fallbackModel);
           return;
-        }
-
-        // If curated download failed and there are local models available, try them all sequentially
-        const localModels = await this.listLocalModels();
-        if (localModels.length > 0) {
-          this.logger.warn(`Remote model "${targetModel}" could not be loaded. Attempting local models: ${localModels.join(', ')}`);
-          // Let the user know we'll try local models
-          vscode.window.showWarningMessage(`RAGnarōk: Remote model "${targetModel}" could not be loaded. Trying local models...`);
-
-          // Try each local model until one initializes successfully
-          for (const local of localModels) {
-            try {
-              this.logger.info(`Attempting to initialize local model: ${local}`);
-              await this.initializeModel(local);
-              const successMsg = `RAGnarōk: Successfully initialized local model "${local}" after failing to load "${targetModel}".`;
-              this.logger.info(successMsg);
-              vscode.window.showInformationMessage(successMsg);
-              return;
-            } catch (localErr: any) {
-              this.logger.warn(`Failed to initialize local model "${local}":`, localErr?.message ?? localErr);
-              // continue to next local model
-            }
-          }
-
-          // If we exhausted local models, surface a consolidated error message and fall through to throw
-          const message = `RAGnarōk: Failed to initialize any local models after remote model "${targetModel}" failed.`;
-          this.logger.error(message);
-          vscode.window.showErrorMessage(message);
         }
       }
 
@@ -363,8 +496,10 @@ export class EmbeddingService {
           async (progress) => {
             progress.report({ message: 'Downloading and initializing...' });
 
+            const resolvedModelName = this.resolveModelIdentifier(modelName);
+
             // Create the feature extraction pipeline
-            this.pipeline = await pipeline('feature-extraction', modelName, {
+            this.pipeline = await pipeline('feature-extraction', resolvedModelName, {
               progress_callback: (progressData: any) => {
                 if (progressData.status === 'progress' && progressData.progress) {
                   const percent = Math.round(progressData.progress);
