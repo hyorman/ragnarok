@@ -129,24 +129,7 @@ export class TopicManager {
       await this.ensureStorageDirectory();
 
       // Ensure embedding service is initialized so we know the active model
-      // NOTE: Embedding initialization can fail (no network, invalid local models, etc.).
-      // Do not let embedding initialization failures block the whole extension activation.
-      try {
-        await this.embeddingService.initialize();
-      } catch (err: any) {
-        // Log and notify the user, but continue with a degraded mode. The rest
-        // of TopicManager can operate (topics index, metadata) without embeddings
-        // — embeddings will be attempted again lazily when actually needed.
-        const errMsg = err instanceof Error ? err.message : String(err);
-        this.logger.warn('EmbeddingService failed to initialize during TopicManager.init, continuing without embeddings', { error: errMsg });
-        try {
-          vscode.window.showWarningMessage(
-            `RAGnarōk: Embedding model could not be initialized: ${errMsg}. Extension will continue in degraded mode. Configure a local model or check network and re-open the workspace to retry.`
-          );
-        } catch {
-          // If VS Code API not available in some test scenarios, ignore notification errors
-        }
-      }
+      await this.embeddingService.initialize();
 
       // Load topics index (creates a new one if missing)
       await this.loadTopicsIndex();
