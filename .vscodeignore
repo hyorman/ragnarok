@@ -10,9 +10,6 @@ src/**
 **/*.ts
 **/*.map
 
-# assets
-assets/**
-!assets/icon.png
 
 # Configuration files
 .gitignore
